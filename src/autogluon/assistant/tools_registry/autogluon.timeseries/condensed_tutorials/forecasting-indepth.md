@@ -1,22 +1,13 @@
-# Condensed: ```python
+# Condensed: We use uv for faster installation
 
-Summary: This tutorial demonstrates AutoGluon TimeSeriesPredictor for time series forecasting with covariates and static features. It covers: (1) implementing time series forecasting with static features, known covariates, and holiday indicators; (2) handling irregular data, missing values, and proper data formatting; and (3) configuring models with different presets and hyperparameter tuning. Key functionalities include creating TimeSeriesDataFrame objects, adding custom covariates, generating future prediction frames, evaluating forecast accuracy, and selecting from local models (ETS, ARIMA), global models (DeepAR, PatchTST), and ensemble approaches for optimal forecasting performance.
+Summary: This tutorial covers AutoGluon's `TimeSeriesPredictor` and `TimeSeriesDataFrame` for multi-series forecasting. It demonstrates adding static features, known covariates (e.g., weekend indicators, holidays), and past covariates, including a reusable `add_holiday_features` helper function. It explains handling irregular data and missing values via `convert_frequency` and `fill_missing_values`, train/test splitting with `train_test_split`, evaluation with `evaluate`, and internal validation with `num_val_windows` or custom `tuning_data`. It covers model categories (local, global, ensemble), quality presets (`fast_training` through `best_quality`), manual model configuration via `hyperparameters`, model exclusion, and hyperparameter tuning with `space` definitions and `hyperparameter_tune_kwargs`.
 
 *This is a condensed version that preserves essential implementation details and context.*
 
-# AutoGluon Time Series: Working with Covariates and Static Features
+# AutoGluon Time Series: Covariates, Static Features & Holidays
 
 ## Setup
-
 ```python
-# Install dependencies
-!pip install uv
-!uv pip install -q autogluon.timeseries --system
-!uv pip uninstall -q torchaudio torchvision torchtext --system # fix incompatible package versions on Colab
-
-import warnings
-warnings.filterwarnings(action="ignore")
-
 import pandas as pd
 import numpy as np
 from autogluon.timeseries import TimeSeriesDataFrame, TimeSeriesPredictor
@@ -24,38 +15,32 @@ from autogluon.timeseries import TimeSeriesDataFrame, TimeSeriesPredictor
 
 ## Loading Data with Static Features
 
+Static features are per-item metadata (e.g., category/domain). Pass them as a DataFrame with an `item_id` column mapping to time series items:
+
 ```python
-# Load time series data
-df = pd.read_csv("https://autogluon.s3.amazonaws.com/datasets/timeseries/m4_daily_subset/train.csv")
-
-# Load static features
-static_features_df = pd.read_csv("https://autogluon.s3.amazonaws.com/datasets/timeseries/m4_daily_subset/metadata.csv")
-
-# Create TimeSeriesDataFrame with static features
 train_data = TimeSeriesDataFrame.from_data_frame(
     df,
     id_column="item_id",
     timestamp_column="timestamp",
-    static_features_df=static_features_df,
+    static_features_df=static_features_df,  # DataFrame with item_id + feature columns
 )
-
-# Alternative: attach static features to existing TimeSeriesDataFrame
-# train_data.static_features = static_features_df
+# Or attach to existing TimeSeriesDataFrame:
+train_data.static_features = static_features_df
 ```
 
-## Adding Covariates
+## Covariates: Known vs Past
+
+Add columns directly to the `TimeSeriesDataFrame`:
 
 ```python
-# Add log-transformed target as past covariate
-train_data["log_target"] = np.log(train_data["target"])
+train_data["log_target"] = np.log(train_data["target"])  # past covariate
 
-# Add weekend indicator as known covariate
 WEEKEND_INDICES = [5, 6]
 timestamps = train_data.index.get_level_values("timestamp")
-train_data["weekend"] = timestamps.weekday.isin(WEEKEND_INDICES).astype(float)
+train_data["weekend"] = timestamps.weekday.isin(WEEKEND_INDICES).astype(float)  # known covariate
 ```
 
-## Training with Covariates
+Specify known covariates when creating the predictor — **remaining columns (except target and known covariates) are automatically treated as past covariates**:
 
 ```python
 predictor = TimeSeriesPredictor(
@@ -65,47 +50,39 @@ predictor = TimeSeriesPredictor(
 ).fit(train_data)
 ```
 
-## Making Predictions with Known Covariates
+## Prediction with Known Covariates
+
+Generate future known covariates for the forecast horizon:
 
 ```python
-# Generate future dataframe for known covariates
-predictor = TimeSeriesPredictor(prediction_length=14, freq=train_data.freq)
 known_covariates = predictor.make_future_data_frame(train_data)
 known_covariates["weekend"] = known_covariates["timestamp"].dt.weekday.isin(WEEKEND_INDICES).astype(float)
-
-# Make predictions with known covariates
 predictions = predictor.predict(train_data, known_covariates=known_covariates)
 ```
 
-## Working with Holiday Features
+**`known_covariates` requirements:**
+- Must include all columns in `predictor.known_covariates_names`
+- Must include all `item_id`s present in `train_data`
+- Must cover `prediction_length` time steps beyond each series' end
+
+Extra columns/rows/timestamps are automatically filtered.
+
+## Holiday Features
+
+Define holidays via the `holidays` package or a custom dict (`{datetime.date: name}`):
 
 ```python
-!pip install -q holidays
 import holidays
-import datetime
-
-# Get country holidays
-timestamps = train_data.index.get_level_values("timestamp")
 country_holidays = holidays.country_holidays(
-    country="DE",  # select appropriate country/region
+    country="DE",
     years=range(timestamps.min().year, timestamps.max().year + 1),
 )
+```
 
-# Alternative: define custom holidays
-custom_holidays = {
-    datetime.date(1995, 1, 29): "Superbowl",
-    datetime.date(1995, 11, 29): "Black Friday",
-    # Add more dates as needed
-}
+Helper to add holiday columns:
 
-# Function to add holiday features
-def add_holiday_features(
-    ts_df: TimeSeriesDataFrame,
-    country_holidays: dict,
-    include_individual_holidays: bool = True,
-    include_holiday_indicator: bool = True,
-) -> TimeSeriesDataFrame:
-    """Add holiday indicator columns to a TimeSeriesDataFrame."""
+```python
+def add_holiday_features(ts_df, country_holidays, include_individual_holidays=True, include_holiday_indicator=True):
     ts_df = ts_df.copy()
     if not isinstance(ts_df, TimeSeriesDataFrame):
         ts_df = TimeSeriesDataFrame(ts_df)
@@ -117,148 +94,137 @@ def add_holiday_features(
     if include_holiday_indicator:
         ts_df["Holiday"] = holidays_df.max(axis=1).values
     return ts_df
+```
 
-# Add holiday features to training data
+**Training** — register holiday columns as known covariates:
+
+```python
 train_data_with_holidays = add_holiday_features(train_data, country_holidays)
-
-# Train with holiday features
 holiday_columns = train_data_with_holidays.columns.difference(train_data.columns)
-predictor = TimeSeriesPredictor(
-    prediction_length=14,
-    target="target",
-    known_covariates_names=holiday_columns
-).fit(train_data_with_holidays)
+predictor = TimeSeriesPredictor(..., known_covariates_names=holiday_columns).fit(train_data_with_holidays)
+```
 
-# Generate future known covariates with holidays
+**Prediction** — provide future holiday values:
+
+```python
 known_covariates = predictor.make_future_data_frame(train_data)
 known_covariates = add_holiday_features(known_covariates, country_holidays)
-
-# Make predictions with holiday features
 predictions = predictor.predict(train_data_with_holidays, known_covariates=known_covariates)
 ```
 
-**Important Notes:**
-- Known covariates must include all columns listed in `predictor.known_covariates_names`
-- The `item_id` index must include all item IDs present in training data
-- The `timestamp` index must include values for `prediction_length` time steps into the future
-- Check the [Forecasting Model Zoo](forecasting-model-zoo.md) for models supporting static features and covariates
+> **Note:** Not all models support static features and covariates — check the [Forecasting Model Zoo](forecasting-model-zoo.md) for compatibility.
 
-# Data Format and Handling in TimeSeriesPredictor
+# AutoGluon Time Series: Data Format, Missing Values & Evaluation
 
-## Data Length Requirements
+## Data Format Requirements
 
-TimeSeriesPredictor requires time series of sufficient length:
-- With default settings: At least some time series must have length `>= max(prediction_length + 1, 5) + prediction_length`
-- With custom validation settings: Length must be `>= max(prediction_length + 1, 5) + prediction_length + (num_val_windows - 1) * val_step_size`
+**Minimum time series length:**
+- Default: at least some series must have length `>= max(prediction_length + 1, 5) + prediction_length`
+- With advanced validation: `>= max(prediction_length + 1, 5) + prediction_length + (num_val_windows - 1) * val_step_size`
 
-Time series in the dataset can have different lengths.
+Time series can have different lengths.
 
-## Handling Irregular Data and Missing Values
+## Handling Irregular Data & Missing Values
 
-For irregular time series data:
+For irregular time indices (e.g., missing weekends in financial data), specify frequency explicitly:
 
 ```python
-# Specify frequency when creating predictor
 predictor = TimeSeriesPredictor(..., freq="D").fit(df_irregular)
-
-# Or manually convert frequency before training
-df_regular = df_irregular.convert_frequency(freq="D")
 ```
 
-For handling missing values:
+AutoGluon auto-converts irregular data and handles missing values. Alternatively, manually convert:
+
 ```python
-# Default fill (forward + backward)
-df_filled = df_regular.fill_missing_values()
-
-# Custom fill (e.g., for demand forecasting)
-df_filled = df_regular.fill_missing_values(method="constant", value=0.0)
+df_regular = df_irregular.convert_frequency(freq="D")  # fills gaps with NaN
 ```
+
+Fill strategies:
+```python
+df_filled = df_regular.fill_missing_values()  # default: forward + backward fill
+df_filled = df_regular.fill_missing_values(method="constant", value=0.0)  # e.g., demand forecasting
+```
+
+Most AutoGluon models handle NaN natively, so manual filling is optional.
 
 ## Evaluating Forecast Accuracy
 
-1. Split data into train and test sets:
+### Train/Test Split
+
 ```python
+prediction_length = 48
+data = TimeSeriesDataFrame.from_path("...")
 train_data, test_data = data.train_test_split(prediction_length)
 ```
 
-2. Train and evaluate:
+- `test_data` = full original data (history + forecast horizon)
+- `train_data` = original data with last `prediction_length` steps removed per series
+
+### Evaluation
+
 ```python
 predictor = TimeSeriesPredictor(prediction_length=prediction_length, eval_metric="MASE").fit(train_data)
 predictor.evaluate(test_data)
 ```
 
-The evaluation process:
-1. Holds out the last `prediction_length` values of each time series
-2. Generates forecasts for the held-out period
-3. Compares forecasts with actual values using the specified metric
-4. Averages scores across all time series
+**Key detail:** `evaluate` always scores on the last `prediction_length` time steps of each series in `test_data`. Earlier steps are used only to initialize models before forecasting.
 
-## Validation Process
+### Internal Validation
 
-By default, AutoGluon uses the last `prediction_length` time steps of each time series for validation.
+AutoGluon automatically splits `train_data` into internal train/validation sets. The best-performing model on validation is used for prediction.
 
-For more robust validation:
+**Multiple validation windows** (reduces overfitting, increases training time proportionally):
 ```python
 predictor.fit(train_data, num_val_windows=3)
 ```
+Requires series length `>= (num_val_windows + 1) * prediction_length`.
 
-This creates multiple validation windows but requires longer time series and increases training time.
-
-You can also provide a custom validation set:
+**Custom validation set** (score computed on last `prediction_length` steps):
 ```python
 predictor.fit(train_data=train_data, tuning_data=my_validation_dataset)
 ```
 
-# AutoGluon Forecasting Models and TimeSeriesPredictor Configuration
+# AutoGluon Time Series: Models, Presets & Configuration
 
-## Available Forecasting Models
+## Available Model Categories
 
-AutoGluon offers three categories of forecasting models:
+**Local models** — simple statistical models, fit separately per time series (re-fit from scratch for new series):
+- `ETS`, `AutoARIMA`, `Theta`, `SeasonalNaive`
 
-### Local Models
-- Simple statistical models fit separately to each time series
-- Examples: `ETS`, `AutoARIMA`, `Theta`, `SeasonalNaive`
-- For new time series, these models are fit from scratch
+**Global models** — single model learned across all time series:
+- Neural networks (via GluonTS/PyTorch): `DeepAR`, `PatchTST`, `DLinear`, `TemporalFusionTransformer`
+- Pre-trained zero-shot: Chronos
+- Tabular: `RecursiveTabular`, `DirectTabular` (convert forecasting → regression, use LightGBM via `autogluon.tabular`)
 
-### Global Models
-- Machine learning algorithms that learn from multiple time series
-- Neural network models from GluonTS library:
-  - `DeepAR`, `PatchTST`, `DLinear`, `TemporalFusionTransformer`
-- Pre-trained zero-shot models like Chronos
-- Tabular models: `RecursiveTabular` and `DirectTabular` (convert forecasting to regression)
+**Ensemble** — `WeightedEnsemble` combines all model predictions (enabled by default; disable with `enable_ensemble=False`).
 
-### Ensemble Models
-- `WeightedEnsemble` combines predictions from other models
-- Enabled by default, can be disabled with `enable_ensemble=False`
-
-## TimeSeriesPredictor Configuration Options
-
-### Basic Configuration with Presets
+## Presets & Time Limit
 
 ```python
 predictor = TimeSeriesPredictor(...)
 predictor.fit(train_data, presets="medium_quality")
 ```
 
-Available presets:
-- `fast_training`: Simple models, quick training (0.5x time)
-- `medium_quality`: Adds TFT and Chronos-Bolt (1x time)
-- `high_quality`: More powerful models (3x time)
-- `best_quality`: More cross-validation windows (6x time)
+| Preset | Description | Relative Fit Time |
+|:--|:--|:--|
+| `fast_training` | Statistical + fast tree-based models | 0.5x |
+| `medium_quality` | Above + TFT + Chronos-Bolt (small) | 1x |
+| `high_quality` | More powerful DL, ML, statistical & pretrained models | 3x |
+| `best_quality` | Same as `high_quality` + more CV windows (best for <50 series) | 6x |
 
-Control training duration with `time_limit`:
+Control training time directly:
 ```python
-predictor.fit(train_data, time_limit=60*60)  # in seconds
+predictor.fit(train_data, time_limit=60 * 60)  # seconds; trains until all models fit if omitted
 ```
 
-### Manual Model Configuration
+## Manual Model Configuration
 
-Specify models and parameters:
+Override presets via `hyperparameters` — pass `{}` for defaults, or a list for multiple configs:
+
 ```python
 predictor.fit(
-    train_data,
+    ...,
     hyperparameters={
-        "DeepAR": {},
+        "DeepAR": {},  # default hyperparameters
         "Theta": [
             {"decomposition_type": "additive"},
             {"seasonal_period": 1},
@@ -267,18 +233,13 @@ predictor.fit(
 )
 ```
 
-Exclude specific models:
+Exclude specific models from presets:
 ```python
-predictor.fit(
-    train_data,
-    presets="high_quality",
-    excluded_model_types=["AutoETS", "AutoARIMA"],
-)
+predictor.fit(..., presets="high_quality", excluded_model_types=["AutoETS", "AutoARIMA"])
 ```
 
-### Hyperparameter Tuning
+## Hyperparameter Tuning
 
-Define search spaces for model parameters:
 ```python
 from autogluon.common import space
 
@@ -290,21 +251,23 @@ predictor.fit(
             "dropout_rate": space.Categorical(0.1, 0.3),
         },
     },
-    hyperparameter_tune_kwargs="auto",
+    hyperparameter_tune_kwargs="auto",  # 10 trials by default
     enable_ensemble=False,
 )
 ```
 
-Custom tuning configuration:
+Custom HPO configuration:
 ```python
 predictor.fit(
-    train_data,
+    ...,
     hyperparameter_tune_kwargs={
-        "num_trials": 20,
-        "scheduler": "local",
-        "searcher": "random",
-    }
+        "num_trials": 20,        # configs per tuned model
+        "searcher": "random",    # only supported option
+        "scheduler": "local",    # only supported option
+    },
 )
 ```
 
-**Note:** HPO significantly increases training time but often provides modest performance gains.
+Uses Ray Tune for GluonTS deep learning models, random search for others.
+
+> **Warning:** HPO significantly increases training time but often provides only modest performance gains.

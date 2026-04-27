@@ -1,32 +1,22 @@
-# Condensed: ```python
+# Condensed: Finetuning Multilingual Model with IA3 + BitFit
 
-Summary: This tutorial demonstrates parameter-efficient multilingual model fine-tuning using AutoGluon's MultiModalPredictor. It covers implementing IA3+BitFit techniques that require only ~0.5% of parameters while maintaining cross-lingual performance across English, German, and Japanese sentiment analysis. The tutorial shows how to train large language models (like FLAN-T5-XL) on limited hardware using gradient checkpointing, and provides code for data preparation, model configuration, and evaluation. Key functionalities include PEFT implementation, multilingual transfer learning, memory optimization techniques, and hyperparameter configuration for efficient fine-tuning of transformer models.
+Summary: This tutorial demonstrates parameter-efficient finetuning (PEFT) using AutoGluon's MultiModalPredictor with IA3+BitFit (`optim.peft: "ia3_bias"`), tuning only ~0.5% of parameters for multilingual sentiment classification. It covers configuring hyperparameters for efficient training, cross-lingual evaluation (English/German/Japanese), and finetuning large models like FLAN-T5-XL (~1.2B params) on a single T4 GPU using gradient checkpointing (`model.hf_text.gradient_checkpointing: True`) combined with PEFT. Key tasks include setting up MultiModalPredictor with multilingual presets, configuring learning rate/batch size/epochs, memory optimization via `low_cpu_mem_usage`, and evaluating cross-lingual transfer performance.
 
 *This is a condensed version that preserves essential implementation details and context.*
 
-# Efficient Multilingual Model Fine-tuning with AutoGluon
+# Efficient Finetuning with AutoGluon MultiModal (IA3 + BitFit)
 
-## Setup and Data Preparation
+## Setup & Data
 
 ```python
 !pip install autogluon.multimodal
-!wget --quiet https://automl-mm-bench.s3.amazonaws.com/multilingual-datasets/amazon_review_sentiment_cross_lingual.zip
+!wget --quiet https://automl-mm-bench.s3.amazonaws.com/multilingual-datasets/amazon_review_sentiment_cross_lingual.zip -O amazon_review_sentiment_cross_lingual.zip
 !unzip -q -o amazon_review_sentiment_cross_lingual.zip -d .
+```
 
-import os
-import shutil
+```python
 import pandas as pd
-import warnings
-warnings.filterwarnings("ignore")
 
-# Set cache directory and clear it
-os.environ["TRANSFORMERS_CACHE"] = "cache"
-def clear_cache():
-    if os.path.exists("cache"):
-        shutil.rmtree("cache")
-clear_cache()
-
-# Load and sample data
 train_en_df = pd.read_csv("amazon_review_sentiment_cross_lingual/en_train.tsv",
                           sep="\t", header=None, names=["label", "text"]) \
                 .sample(1000, random_state=123).reset_index(drop=True)
@@ -34,88 +24,69 @@ train_en_df = pd.read_csv("amazon_review_sentiment_cross_lingual/en_train.tsv",
 test_en_df = pd.read_csv("amazon_review_sentiment_cross_lingual/en_test.tsv",
                           sep="\t", header=None, names=["label", "text"]) \
                .sample(200, random_state=123).reset_index(drop=True)
-               
-test_de_df = pd.read_csv("amazon_review_sentiment_cross_lingual/de_test.tsv",
-                          sep="\t", header=None, names=["label", "text"]) \
-               .sample(200, random_state=123).reset_index(drop=True)
-               
-test_jp_df = pd.read_csv('amazon_review_sentiment_cross_lingual/jp_test.tsv',
-                          sep='\t', header=None, names=['label', 'text']) \
-               .sample(200, random_state=123).reset_index(drop=True)
+# Similarly load de_test.tsv and jp_test.tsv
 ```
 
 ## Finetuning Multilingual Model with IA3 + BitFit
 
-Parameter-efficient fine-tuning using IA3 + BitFit requires only ~0.5% of parameters:
+Enable efficient finetuning by setting `optim.peft` to `"ia3_bias"` — tunes only **~0.5% of parameters** with results comparable to full finetuning.
 
 ```python
 from autogluon.multimodal import MultiModalPredictor
-import uuid
 
-model_path = f"./tmp/{uuid.uuid4().hex}-multilingual_ia3"
 predictor = MultiModalPredictor(label="label", path=model_path)
-predictor.fit(
-    train_en_df,
-    presets="multilingual",
-    hyperparameters={
-        "optim.peft": "ia3_bias",  # Enable IA3 + BitFit
-        "optim.lr_decay": 0.9,
-        "optim.lr": 3e-03,
-        "optim.end_lr": 3e-03,
-        "optim.max_epochs": 2,
-        "optim.warmup_steps": 0,
-        "env.batch_size": 32,
-    }
-)
+predictor.fit(train_en_df,
+              presets="multilingual",
+              hyperparameters={
+                  "optim.peft": "ia3_bias",
+                  "optim.lr_decay": 0.9,
+                  "optim.lr": 3e-03,
+                  "optim.end_lr": 3e-03,
+                  "optim.max_epochs": 2,
+                  "optim.warmup_steps": 0,
+                  "env.batch_size": 32,
+              })
+```
 
-# Evaluate on multiple languages
+**Key result:** English-only training achieves good cross-lingual performance on German and Japanese test sets.
+
+```python
 score_in_en = predictor.evaluate(test_en_df)
 score_in_de = predictor.evaluate(test_de_df)
 score_in_jp = predictor.evaluate(test_jp_df)
-print('Score in the English Testset:', score_in_en)
-print('Score in the German Testset:', score_in_de)
-print('Score in the Japanese Testset:', score_in_jp)
 ```
 
-## Training FLAN-T5-XL on Single GPU
+## Training FLAN-T5-XL (~1.2B params) on Single GPU
 
-Combining gradient checkpointing with parameter-efficient fine-tuning enables training large models on limited hardware:
+Combine **gradient checkpointing** + **PEFT** to finetune large models on a single T4 GPU. Set `"model.hf_text.gradient_checkpointing": True`.
 
 ```python
-clear_cache()
-shutil.rmtree(model_path)
-
-train_en_df_downsample = train_en_df.sample(200, random_state=123)
-
-new_model_path = f"./tmp/{uuid.uuid4().hex}-multilingual_ia3_gradient_checkpoint"
 predictor = MultiModalPredictor(label="label", path=new_model_path)
-predictor.fit(
-    train_en_df_downsample,
-    presets="multilingual",
-    hyperparameters={
-        "model.hf_text.checkpoint_name": "google/flan-t5-xl",
-        "model.hf_text.gradient_checkpointing": True,  # Enable gradient checkpointing
-        "model.hf_text.low_cpu_mem_usage": True,
-        "optim.peft": "ia3_bias",
-        "optim.lr_decay": 0.9,
-        "optim.lr": 3e-03,
-        "optim.end_lr": 3e-03,
-        "optim.max_epochs": 1,
-        "optim.warmup_steps": 0,
-        "env.batch_size": 1,
-        "env.inference_batch_size_ratio": 1
-    }
-)
-
-score_in_en = predictor.evaluate(test_en_df)
-print('Score in the English Testset:', score_in_en)
+predictor.fit(train_en_df.sample(200, random_state=123),
+              presets="multilingual",
+              hyperparameters={
+                  "model.hf_text.checkpoint_name": "google/flan-t5-xl",
+                  "model.hf_text.gradient_checkpointing": True,
+                  "model.hf_text.low_cpu_mem_usage": True,
+                  "optim.peft": "ia3_bias",
+                  "optim.lr_decay": 0.9,
+                  "optim.lr": 3e-03,
+                  "optim.end_lr": 3e-03,
+                  "optim.max_epochs": 1,
+                  "optim.warmup_steps": 0,
+                  "env.batch_size": 1,
+                  "env.inference_batch_size_ratio": 1
+              })
 ```
 
-## Key Takeaways
+**Results:** 1.2B total params, only **203K trainable**. Achieves `roc_auc: 0.931` on English test set with just 200 training samples and 1 epoch.
 
-1. Parameter-efficient fine-tuning with `optim.peft="ia3_bias"` requires only ~0.5% of parameters while maintaining performance
-2. Models trained on English data can perform well on other languages (German, Japanese)
-3. Gradient checkpointing (`model.hf_text.gradient_checkpointing=True`) enables training large models like FLAN-T5-XL (2B parameters) on a single GPU
-4. For large models, use smaller batch sizes and enable `low_cpu_mem_usage`
+### Critical Parameters
 
-For more examples, see [AutoMM Examples](https://github.com/autogluon/autogluon/tree/master/examples/automm) and [Customize AutoMM](customization.ipynb).
+| Parameter | Purpose |
+|---|---|
+| `optim.peft: "ia3_bias"` | Enables IA3 + BitFit efficient finetuning |
+| `model.hf_text.gradient_checkpointing: True` | Reduces GPU memory for large models |
+| `model.hf_text.low_cpu_mem_usage: True` | Reduces CPU memory during model loading |
+| `env.batch_size: 1` | Required for large models on limited GPU memory |
+| `presets: "multilingual"` | Uses multilingual backbone model |

@@ -1,80 +1,66 @@
-# Condensed: ```python
+# Condensed: Extract Embeddings
 
-Summary: This tutorial demonstrates using AutoGluon MultiModal for image-text similarity tasks. It covers extracting embeddings from images and text, performing cross-modal retrieval (finding images matching text queries and vice versa using semantic search), and predicting image-text matching with probability scores. Key functionalities include embedding extraction, semantic search for retrieval, and binary classification of image-text pairs. The implementation uses MultiModalPredictor with "image_text_similarity" problem type, making it valuable for building multimodal search systems, content recommendation, or image captioning validation.
+Summary: This tutorial demonstrates AutoGluon's `MultiModalPredictor` for image-text similarity tasks using `problem_type="image_text_similarity"`. It covers extracting image and text embeddings via `extract_embedding()`, performing bidirectional semantic search (text→image and image→text retrieval) using the `semantic_search` utility with `top_k` and swappable query/response embeddings, and predicting image-text pair matching with binary predictions and probabilities. Key implementation details include adding batch dimensions with `[None,]` for single queries, reinitializing the predictor with arbitrary `query`/`response` column names for pair matching, and accessing results via `hits[0][0]["response_id"]`.
 
 *This is a condensed version that preserves essential implementation details and context.*
 
-# Image-Text Similarity with AutoGluon MultiModal
+# AutoGluon Image-Text Similarity: Embeddings & Retrieval
 
-## Setup and Data Preparation
+## Setup & Data
 
 ```python
 !pip install autogluon.multimodal
+from autogluon.multimodal import MultiModalPredictor
+from autogluon.multimodal.utils import download, semantic_search
 
-from autogluon.multimodal.utils import download
-
-# Sample texts
 texts = [
     "A cheetah chases prey on across a field.",
     "A man is eating a piece of bread.",
-    # ... more text examples ...
+    # ... more texts
+    "There is a carriage in the image.",
+    "A man is riding a white horse on an enclosed ground.",
     "A monkey is playing drums.",
 ]
-
-# Sample image URLs
-urls = ['http://farm4.staticflickr.com/3179/2872917634_f41e6987a8_z.jpg',
-        # ... more URLs ...
-        'https://farm6.staticflickr.com/5251/5548123650_1a69ce1e34_z.jpg']
-
 image_paths = [download(url) for url in urls]
 ```
 
 ## Extract Embeddings
 
-Initialize the predictor with the appropriate problem type:
+Initialize with `problem_type="image_text_similarity"`. Image/text data routes through corresponding encoders automatically.
 
 ```python
-from autogluon.multimodal import MultiModalPredictor
 predictor = MultiModalPredictor(problem_type="image_text_similarity")
-
-# Extract embeddings
 image_embeddings = predictor.extract_embedding(image_paths, as_tensor=True)
 text_embeddings = predictor.extract_embedding(texts, as_tensor=True)
 ```
 
-## Image Retrieval with Text Query
+## Image Retrieval (Text Query) / Text Retrieval (Image Query)
 
-Retrieve images that match a text query:
+Use `semantic_search` with cosine similarity. Swap `query_embeddings`/`response_embeddings` to switch retrieval direction. **Note:** use `[None,]` to add batch dimension to single queries.
 
 ```python
-from autogluon.multimodal.utils import semantic_search
-
-# Search for images matching a text query
+# Text → Image retrieval
 hits = semantic_search(
     matcher=predictor,
-    query_embeddings=text_embeddings[6][None,],  # "There is a carriage in the image."
+    query_embeddings=text_embeddings[6][None,],
     response_embeddings=image_embeddings,
     top_k=5,
 )
-```
+# Access result: image_paths[hits[0][0]["response_id"]]
 
-## Text Retrieval with Image Query
-
-Retrieve texts that match an image query:
-
-```python
-# Search for texts matching an image query
+# Image → Text retrieval (swap query/response)
 hits = semantic_search(
     matcher=predictor,
-    query_embeddings=image_embeddings[4][None,],  # Image of a man riding a horse
+    query_embeddings=image_embeddings[4][None,],
     response_embeddings=text_embeddings,
     top_k=5,
 )
+# Access result: texts[hits[0][0]["response_id"]]
 ```
 
-## Predict Image-Text Matching
+## Predict Image-Text Pair Matching
 
-Initialize a predictor for matching prediction:
+Requires reinitializing predictor with `query` and `response` column names:
 
 ```python
 predictor = MultiModalPredictor(
@@ -83,19 +69,11 @@ predictor = MultiModalPredictor(
     problem_type="image_text_similarity",
 )
 
-# Predict if an image-text pair matches
+# Binary match prediction
 pred = predictor.predict({"abc": [image_paths[4]], "xyz": [texts[3]]})
 
-# Get matching probabilities
+# Match probabilities (for custom thresholds)
 proba = predictor.predict_proba({"abc": [image_paths[4]], "xyz": [texts[3]]})
 ```
 
-## Key Points
-
-- Use `problem_type="image_text_similarity"` for image-text similarity tasks
-- Extract embeddings with `predictor.extract_embedding()`
-- Use `semantic_search()` for retrieval tasks
-- For direct matching prediction, initialize with `query` and `response` parameters
-- Both binary predictions and probability scores are available
-
-For customization options, refer to the "Customize AutoMM" documentation.
+**Key concepts:** `query`/`response` names are arbitrary but must match the keys in the prediction dict. This enables both `predict` (binary) and `predict_proba` (probability) outputs.

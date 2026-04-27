@@ -1,42 +1,49 @@
 # Condensed: Multiple Label Columns with AutoMM
 
-Summary: This tutorial explains how to handle multiple label columns in AutoGluon MultiModal using two approaches: (1) converting mutually exclusive labels into a single combined column, or (2) training separate models for non-mutually exclusive labels. It provides code examples for both methods, emphasizing the need to properly manage label columns during training and prediction. Key implementation notes include time allocation across multiple models, excluding other label columns as features, and maintaining consistent preprocessing between training and inference. The tutorial helps with multi-label classification tasks in AutoGluon's MultiModal framework.
+Summary: This tutorial provides workarounds for handling multiple label columns with AutoGluon MultiModalPredictor, which doesn't natively support multi-label output. It covers two scenarios: (1) mutually exclusive labels—combining multiple binary columns into a single categorical column, training one predictor, and converting predictions back; (2) non-mutually exclusive labels (multi-label classification)—training separate predictors per label while excluding other label columns from features. Key techniques include label column merging/splitting, iterative model training, proper feature isolation, and time budget allocation across multiple predictors. Useful for multi-label classification and multi-output prediction tasks with AutoGluon.
 
 *This is a condensed version that preserves essential implementation details and context.*
 
 # Multiple Label Columns with AutoMM
 
-## Multiple Label Columns with AutoMM
+AutoGluon MultiModal doesn't natively support multiple label columns. Two approaches based on label relationships:
 
-### Implementation Details
+## Mutually Exclusive Labels
 
-When working with multiple label columns in AutoGluon MultiModal, you have two main approaches:
+Combine into a single column:
 
-1. **Mutually Exclusive Labels**: Convert multiple columns to a single label
-   ```python
-   df['combined_label'] = df.apply(lambda row: combine_labels(row, label_columns), axis=1)
-   predictor = MultiModalPredictor(label='combined_label').fit(df)
-   ```
+```python
+def combine_labels(row, label_columns):
+    for label in label_columns:
+        if row[label] == 1:
+            return label
+    return 'none'
 
-2. **Non-Mutually Exclusive Labels**: Train separate models
-   ```python
-   predictors = {}
-   for label in label_columns:
-       train_df = df.drop(columns=[l for l in label_columns if l != label])
-       predictors[label] = MultiModalPredictor(label=label).fit(train_df)
-   ```
+df['combined_label'] = df.apply(lambda row: combine_labels(row, label_columns), axis=1)
 
-### Key Implementation Notes
+predictor = MultiModalPredictor(label='combined_label').fit(df)
 
-- For mutually exclusive labels, convert to a single column before training
-- For non-mutually exclusive labels, train separate models for each label
-- When using multiple predictors, allocate time_limit/N for each of N label columns
-- Always exclude other label columns from features when training individual models
-- For prediction, apply the same preprocessing/postprocessing steps as during training
+# Convert predictions back to multiple columns
+predictions = predictor.predict(test_data)
+for label in label_columns:
+    test_data[f'{label}'] = (predictions == label).astype(int)
+```
 
-### Best Practices
+## Non-Mutually Exclusive Labels
 
-- Ensure consistent preprocessing between training and inference
-- When using the multiple-model approach, be aware of increased training time and resource usage
-- Consider model ensembling if appropriate for your use case
-- For customization options, refer to the AutoMM customization documentation
+Train separate predictors per label, **excluding other label columns from features**:
+
+```python
+label_columns = ['label1', 'label2', 'label3']
+predictors = {}
+
+for label in label_columns:
+    train_df = df.drop(columns=[l for l in label_columns if l != label])
+    predictors[label] = MultiModalPredictor(label=label).fit(train_df)
+
+for label in label_columns:
+    test_features = test_data.drop(columns=label_columns)
+    test_data[f'pred_{label}'] = predictors[label].predict(test_features)
+```
+
+**Important:** With N label columns, allocate `total_time / N` as `time_limit` for each predictor.

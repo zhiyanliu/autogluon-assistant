@@ -1,33 +1,28 @@
-# Condensed: ```python
+# Condensed: We use uv for faster installation
 
-Summary: This tutorial demonstrates AutoGluon's time series forecasting capabilities, teaching LLMs how to implement probabilistic time series forecasting with minimal code. It covers TimeSeriesDataFrame for data preparation in long format (requiring item_id, timestamp, and target columns), TimeSeriesPredictor for model training with various quality presets, and generating probabilistic forecasts with quantiles. Key functionalities include handling multiple time series simultaneously, automatic model selection (including statistical, tree-based, and deep learning approaches), customizable forecast horizons, and model evaluation using metrics like MASE. This knowledge helps with implementing production-ready time series forecasting systems.
+Summary: This tutorial covers AutoGluon's time series forecasting pipeline using `TimeSeriesDataFrame` and `TimeSeriesPredictor`. It demonstrates loading panel data in long format with `from_data_frame()` (specifying `id_column`, `timestamp_column`), configuring predictors with `prediction_length`, `eval_metric` (MASE), and `target`, training with quality presets (`fast_training` to `best_quality`) and `time_limit`, generating probabilistic multi-step forecasts with quantiles, visualizing predictions via `predictor.plot()`, and evaluating models with `predictor.leaderboard()`. Useful for implementing automated multi-series forecasting, model selection, and probabilistic prediction tasks with minimal code.
 
 *This is a condensed version that preserves essential implementation details and context.*
 
-# AutoGluon Time Series Forecasting Tutorial
+# AutoGluon Time Series Forecasting - Condensed Tutorial
 
-## Setup and Installation
-
+## Setup
 ```python
 !pip install uv
 !uv pip install -q autogluon.timeseries --system
-!uv pip uninstall -q torchaudio torchvision torchtext --system # fix incompatible package versions on Colab
-
-import pandas as pd
-from autogluon.timeseries import TimeSeriesDataFrame, TimeSeriesPredictor
+!uv pip uninstall -q torchaudio torchvision torchtext --system  # fix Colab incompatibilities
 ```
 
-## Key Components
+## Core Classes
+```python
+from autogluon.timeseries import TimeSeriesDataFrame, TimeSeriesPredictor
+```
+- **`TimeSeriesDataFrame`** — stores multiple time series
+- **`TimeSeriesPredictor`** — fits, tunes, selects models, and generates forecasts
 
-- **TimeSeriesDataFrame**: Stores multiple time series datasets
-- **TimeSeriesPredictor**: Handles model fitting, tuning, selection, and forecasting
+## Data Format
 
-## Data Preparation
-
-AutoGluon requires time series data in **long format** with three essential columns:
-- Unique ID for each time series (`item_id`)
-- Timestamp of observation (`timestamp`)
-- Target value (`target`)
+AutoGluon requires **long format** with three columns: unique ID, timestamp, and target value. Column names are flexible but must be specified.
 
 ```python
 df = pd.read_csv("https://autogluon.s3.amazonaws.com/datasets/timeseries/m4_hourly_subset/train.csv")
@@ -39,11 +34,17 @@ train_data = TimeSeriesDataFrame.from_data_frame(
 )
 ```
 
-## Training Models
+**Key concept:** Each time series is an *item* (e.g., product, stock). This is **panel** forecasting, not multivariate — each series is forecast independently.
+
+`TimeSeriesDataFrame` inherits from `pandas.DataFrame`, so all pandas methods are available.
+
+## Training
+
+`prediction_length` = number of future steps to forecast. Set based on task frequency (e.g., 48 for 48 hours ahead with hourly data).
 
 ```python
 predictor = TimeSeriesPredictor(
-    prediction_length=48,  # Forecast horizon (48 hours)
+    prediction_length=48,
     path="autogluon-m4-hourly",
     target="target",
     eval_metric="MASE",
@@ -52,37 +53,35 @@ predictor = TimeSeriesPredictor(
 predictor.fit(
     train_data,
     presets="medium_quality",
-    time_limit=600,  # 10 minutes
+    time_limit=600,
 )
 ```
 
-**Preset Options**:
-- `medium_quality`: Includes baselines (`Naive`, `SeasonalNaive`), statistical models (`ETS`, `Theta`), tree-based models (`RecursiveTabular`, `DirectTabular`), deep learning (`TemporalFusionTransformer`), and weighted ensemble
-- Other options: `fast_training`, `high_quality`, `best_quality`
+**Presets** (increasing quality/time): `"fast_training"`, `"medium_quality"`, `"high_quality"`, `"best_quality"`
 
-## Generating Forecasts
+`medium_quality` includes: `Naive`, `SeasonalNaive`, `ETS`, `Theta`, `RecursiveTabular`, `DirectTabular` (LightGBM), `TemporalFusionTransformer`, and a weighted ensemble.
+
+**Validation:** By default, the last `prediction_length` timesteps of each series are held out for internal validation and model ranking.
+
+## Prediction
 
 ```python
 predictions = predictor.predict(train_data)
 ```
 
-AutoGluon produces **probabilistic forecasts** with both mean predictions and quantiles of the forecast distribution.
+Produces **probabilistic forecasts**: mean predictions plus quantiles (e.g., `"0.1"` quantile = 10% chance target falls below that value). Forecasts the next `prediction_length` steps from each series' end.
 
 ## Visualization
 
 ```python
-import matplotlib.pyplot as plt
-
 test_data = TimeSeriesDataFrame.from_path("https://autogluon.s3.amazonaws.com/datasets/timeseries/m4_hourly_subset/test.csv")
-
 predictor.plot(test_data, predictions, quantile_levels=[0.1, 0.9], max_history_length=200, max_num_item_ids=4)
 ```
 
-## Model Evaluation
+## Evaluation
 
 ```python
-# Evaluates models on test data
 predictor.leaderboard(test_data)
 ```
 
-Note: MASE scores are multiplied by `-1` in the leaderboard, so higher "negative MASE" values indicate better forecasts.
+Test data must include both history and the forecast horizon (last `prediction_length` values). **Leaderboard scores are sign-flipped** (higher = better), so MASE appears as negative values.

@@ -1,139 +1,45 @@
-# Condensed: ```python
+# Condensed: Training
 
-Summary: "Summary: 
-Summary: 
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: 
-
-Summary: This tutorial demonstrates implementing Named Entity Recognition (NER) with AutoGluon MultiModal. It covers the JSON annotation format required for NER tasks (with entity_group, start, and end positions), model training using MultiModalPredictor, evaluation with metrics like F1 score, and prediction visualization. The tutorial shows how to train NER models with pre-trained checkpoints like ELECTRA, make predictions on new text, extract prediction probabilities, and reload/continue training models. It provides practical code examples for implementing complete NER workflows with AutoGluon's simplified API.
+Summary: This tutorial covers building a Named Entity Recognition (NER) pipeline using AutoGluon's `MultiModalPredictor` with `problem_type="ner"`. It details the required JSON annotation format (`entity_group`, `start`, `end` keys), optional BIO tagging, and data loading via `load_pd`. Key tasks include training with configurable backbone models (e.g., `google/electra-small-discriminator`) and `time_limit`, evaluation using seqeval metrics (`overall_f1`, `overall_precision`, `overall_recall`, plus per-entity metrics), prediction with `predict()`/`predict_proba()`, visualization via `visualize_ner`, and model reloading with continuous training using `MultiModalPredictor.load()`.
 
 *This is a condensed version that preserves essential implementation details and context.*
 
-# Named Entity Recognition with AutoGluon MultiModal
+# AutoGluon NER Tutorial (Condensed)
 
-## Installation and Setup
+## Setup & Data Format
 
 ```python
 !pip install autogluon.multimodal
 ```
 
-## Data Format
+NER annotations use JSON with **required keys**: `entity_group`, `start` (char-level begin position), `end` (char-level end position):
 
-NER annotations require JSON format with specific keys:
 ```python
-json.dumps([
-    {"entity_group": "PERSON", "start": 0, "end": 15},
-    {"entity_group": "LOCATION", "start": 28, "end": 35}
-])
+[{"entity_group": "PERSON", "start": 0, "end": 15},
+ {"entity_group": "LOCATION", "start": 28, "end": 35}]
 ```
 
-Key requirements:
-- `entity_group`: category of the entity
-- `start`: character position where entity begins
-- `end`: character position where entity ends
+**BIO format** is optional — you can use `B-`/`I-` prefixes (e.g., `B-PERSON`, `I-PERSON`). `O` tags are handled automatically.
 
-## Visualizing Annotations
-
+Visualize annotations:
 ```python
 from autogluon.multimodal.utils import visualize_ner
-
-sentence = "Albert Einstein was born in Germany and is widely acknowledged to be one of the greatest physicists."
-annotation = [{"entity_group": "PERSON", "start": 0, "end": 15},
-              {"entity_group": "LOCATION", "start": 28, "end": 35}]
-
 visualize_ner(sentence, annotation)
 ```
 
-Note: BIO (Beginning-Inside-Outside) format is supported but not required.
+## Loading Data
+
+```python
+from autogluon.core.utils.loaders import load_pd
+train_data = load_pd.load('https://automl-mm-bench.s3.amazonaws.com/ner/mit-movies/train_v2.csv')
+test_data = load_pd.load('https://automl-mm-bench.s3.amazonaws.com/ner/mit-movies/test_v2.csv')
+```
+
+Dataset has `text_snippet` and `entity_annotations` columns.
 
 ## Training
+
+Set `problem_type="ner"`. **Recommended: use longer `time_limit`** (30-60 min) for real applications.
 
 ```python
 from autogluon.multimodal import MultiModalPredictor
@@ -145,23 +51,19 @@ predictor = MultiModalPredictor(problem_type="ner", label=label_col, path=model_
 predictor.fit(
     train_data=train_data,
     hyperparameters={'model.ner_text.checkpoint_name':'google/electra-small-discriminator'},
-    time_limit=300, # seconds
+    time_limit=300,
 )
 ```
 
-Important: For production use, set longer `time_limit` (30-60 minutes recommended).
-
 ## Evaluation
+
+Uses [seqeval](https://huggingface.co/spaces/evaluate-metric/seqeval). Metrics: `overall_recall`, `overall_precision`, `overall_f1`, `overall_accuracy`. Use entity group name (e.g., `"actor"`) for per-entity metrics.
 
 ```python
 predictor.evaluate(test_data, metrics=['overall_recall', "overall_precision", "overall_f1", "actor"])
 ```
 
-Supported metrics:
-- `overall_recall`, `overall_precision`, `overall_f1`, `overall_accuracy`
-- Entity-specific metrics (e.g., "actor")
-
-## Prediction and Visualization
+## Prediction & Visualization
 
 ```python
 sentence = "Game of Thrones is an American fantasy drama television series created by David Benioff"
@@ -176,7 +78,7 @@ predictions = predictor.predict_proba({'text_snippet': [sentence]})
 print(predictions[0][0]['probability'])
 ```
 
-## Model Reloading and Continuous Training
+## Reload & Continue Training
 
 ```python
 new_predictor = MultiModalPredictor.load(model_path)

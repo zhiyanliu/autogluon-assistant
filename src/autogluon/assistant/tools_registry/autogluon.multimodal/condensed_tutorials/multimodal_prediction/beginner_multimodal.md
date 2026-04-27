@@ -1,44 +1,37 @@
-# Condensed: ```python
+# Condensed: Dataset
 
-Summary: This tutorial demonstrates AutoGluon MultiModal, a framework for multimodal machine learning that handles mixed data types. It covers implementing a pet adoption speed predictor using images and tabular data, showcasing automatic modality detection, model selection, and late-fusion techniques. Key functionalities include training a multimodal predictor with minimal code, evaluating model performance, making predictions, extracting embeddings for downstream tasks, and saving/loading models. The tutorial is valuable for developers implementing classification tasks with mixed data types (images and tabular data) who need automated machine learning capabilities without extensive manual configuration.
+Summary: This tutorial demonstrates using AutoGluon's `MultiModalPredictor` for multimodal classification combining images, text, and tabular data. It covers data preparation (image path expansion for semicolon-delimited paths), training with `time_limit`, evaluation with metrics like `roc_auc`, prediction (`predict`, `predict_proba`), embedding extraction via `extract_embedding`, and model save/load. Key techniques include automatic problem type detection, modality inference, late-fusion of multiple backbones, and handling multi-image columns. Useful for coding tasks involving multimodal ML pipelines, binary classification, and feature embedding generation with minimal configuration.
 
 *This is a condensed version that preserves essential implementation details and context.*
 
-# AutoGluon MultiModal Tutorial
+# AutoGluon MultiModal Quick Start
 
-## Setup
+## Setup & Data Preparation
 
 ```python
 !pip install autogluon.multimodal
-
-import os
-import numpy as np
-import warnings
-warnings.filterwarnings('ignore')
-np.random.seed(123)
 ```
 
-## Dataset Preparation
-
-Using a simplified version of PetFinder dataset to predict animal adoption rates (0=slow, 1=fast).
+**Dataset**: Simplified PetFinder dataset — binary classification (adoption speed: 0=slow, 1=fast) using images, text descriptions, and tabular features.
 
 ```python
-# Download dataset
-download_dir = './ag_automm_tutorial'
-zip_file = 'https://automl-mm-bench.s3.amazonaws.com/petfinder_for_tutorial.zip'
+import os, numpy as np, pandas as pd
 from autogluon.core.utils.loaders import load_zip
-load_zip.unzip(zip_file, unzip_dir=download_dir)
 
-# Load data
-import pandas as pd
+download_dir = './ag_automm_tutorial'
+load_zip.unzip('https://automl-mm-bench.s3.amazonaws.com/petfinder_for_tutorial.zip', unzip_dir=download_dir)
+
 dataset_path = download_dir + '/petfinder_for_tutorial'
 train_data = pd.read_csv(f'{dataset_path}/train.csv', index_col=0)
 test_data = pd.read_csv(f'{dataset_path}/test.csv', index_col=0)
 label_col = 'AdoptionSpeed'
+```
 
-# Process image paths
+**Image path expansion** (required for training to locate image files):
+
+```python
 image_col = 'Images'
-train_data[image_col] = train_data[image_col].apply(lambda ele: ele.split(';')[0])  # Use first image only
+train_data[image_col] = train_data[image_col].apply(lambda ele: ele.split(';')[0])  # first image only
 test_data[image_col] = test_data[image_col].apply(lambda ele: ele.split(';')[0])
 
 def path_expander(path, base_folder):
@@ -51,44 +44,28 @@ test_data[image_col] = test_data[image_col].apply(lambda ele: path_expander(ele,
 
 ## Training
 
+AutoMM auto-detects problem type, data modalities, selects models, and applies late-fusion (MLP/transformer) when multiple backbones are used.
+
 ```python
 from autogluon.multimodal import MultiModalPredictor
 predictor = MultiModalPredictor(label=label_col)
-predictor.fit(
-    train_data=train_data,
-    time_limit=120,  # seconds
-)
+predictor.fit(train_data=train_data, time_limit=120)
 ```
 
-AutoMM automatically:
-- Infers problem type (classification/regression)
-- Detects data modalities
-- Selects appropriate models
-- Trains with late-fusion if multiple backbones are available
-
-## Evaluation
+## Evaluation, Prediction & Embeddings
 
 ```python
 scores = predictor.evaluate(test_data, metrics=["roc_auc"])
-```
-
-## Prediction
-
-```python
-# Get class predictions
 predictions = predictor.predict(test_data.drop(columns=label_col))
-
-# Get class probabilities (classification only)
-probas = predictor.predict_proba(test_data.drop(columns=label_col))
+probas = predictor.predict_proba(test_data.drop(columns=label_col))  # classification only
+embeddings = predictor.extract_embedding(test_data.drop(columns=label_col))  # returns array of shape (n_samples, embed_dim)
 ```
 
-## Extract Embeddings
-
-```python
-embeddings = predictor.extract_embedding(test_data.drop(columns=label_col))
-```
+> **Note:** `predict_proba()` raises an exception on regression tasks.
 
 ## Save and Load
+
+> ⚠️ **Security Warning:** `MultiModalPredictor.load()` uses `pickle` implicitly. **Only load data you trust.**
 
 ```python
 import uuid
@@ -97,8 +74,6 @@ predictor.save(model_path)
 loaded_predictor = MultiModalPredictor.load(model_path)
 ```
 
-⚠️ **Warning**: `MultiModalPredictor.load()` uses `pickle` module which can be insecure. Only load models from trusted sources.
-
-## Additional Resources
-- More examples: [AutoMM Examples](https://github.com/autogluon/autogluon/tree/master/examples/automm)
-- Customization: Refer to "Customize AutoMM" documentation
+## Further Resources
+- [AutoMM Examples](https://github.com/autogluon/autogluon/tree/master/examples/automm)
+- [Customize AutoMM](../advanced_topics/customization.ipynb)

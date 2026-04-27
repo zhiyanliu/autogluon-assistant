@@ -1,30 +1,20 @@
-# Condensed: ---
+# Condensed: Fine-Tune W2V2-Bert for low-resource ASR with 🤗 Transformers
 
-Summary: This tutorial demonstrates how to fine-tune Facebook's Wav2Vec2-BERT model for low-resource ASR using Mongolian as an example. It covers implementing a complete ASR pipeline with Transformers: data preprocessing (audio resampling, text normalization), creating custom tokenizers for non-Latin scripts, configuring CTC-based models with adapters, and training optimization techniques. Key features include efficient processing of speech data with SeamlessM4TFeatureExtractor, specialized data collation for CTC training, performance evaluation using WER metrics, and best practices for low-resource languages (vocabulary cleaning, adapter layers, and optimizer tuning). The tutorial shows how to achieve performance comparable to Whisper models while being 10-30x faster with only 14 hours of training data.
+Summary: This tutorial provides a complete implementation for fine-tuning Wav2Vec2-BERT (`facebook/w2v-bert-2.0`) on low-resource ASR using CTC, demonstrated on Mongolian Common Voice data. It covers building a character-level CTC tokenizer from dataset transcriptions, text normalization, vocabulary cleaning, audio preprocessing with `SeamlessM4TFeatureExtractor` (16kHz resampling), and a custom `DataCollatorCTCWithPadding` for dynamic batching. Key model configurations include `add_adapter=True`, disabled dropout, gradient checkpointing, and CTC-specific parameters. Training uses HF `Trainer` with WER evaluation. Scaling tips address CTC token duration (10–35ms), warmup ratios (5–15%), AdamW β₂ tuning, and low-frequency character removal from vocabularies.
 
 *This is a condensed version that preserves essential implementation details and context.*
 
 # Fine-Tune W2V2-Bert for Low-Resource ASR with 🤗 Transformers
 
-## Introduction
+## Key Concepts
 
-Wav2Vec2-BERT is a 580M-parameter audio model pre-trained on 4.5M hours of unlabeled audio covering 143+ languages. It builds on previous models like Wav2Vec2, XLSR, XLS-R, and MMS, but with significantly more training data. For ASR tasks, it can be fine-tuned using Connectionist Temporal Classification (CTC).
+**Wav2Vec2-BERT** is a 580M-parameter model pre-trained on **4.5M hours** of unlabeled audio in **143+ languages**. It uses **CTC (Connectionist Temporal Classification)** for ASR fine-tuning, predicting transcriptions in a single pass.
 
-This tutorial demonstrates how to fine-tune the pre-trained checkpoint [facebook/w2v-bert-2.0](https://huggingface.co/facebook/w2v-bert-2.0) on a low-resource language (Mongolian) from Common Voice 16.0 with only ~14 hours of validated training data.
-
-## Motivation
-
-While Whisper models provide state-of-the-art ASR performance for many languages, they perform poorly on "resource-poor" languages like Mongolian (100%+ WER in the original paper). Additionally, Whisper:
-- Has limited vocabulary for fine-tuning on languages with different alphabets
-- Is slow due to its autoregressive nature
-- Requires more tokens per word for uncommon languages
-
-Wav2Vec2-BERT offers advantages for low-resource scenarios:
-- Predicts ASR in a single pass (much faster)
-- Requires little data to achieve competitive performance
-- Is easily adaptable to any alphabet
-- Is more resource-efficient (2.5x)
-- Achieves similar WER to Whisper-large-v3 while being 10-30x faster
+**Why W2V2-BERT over Whisper for low-resource languages:**
+- Whisper fails on resource-poor languages (>100% WER for Mongolian)
+- W2V2-BERT achieves **similar WER** to Whisper-large-v3 after fine-tuning
+- **10-30x faster** inference, **2.5x more resource-efficient**
+- Easily adaptable to any alphabet; requires little labeled data
 
 ## Setup
 
@@ -32,47 +22,48 @@ Wav2Vec2-BERT offers advantages for low-resource scenarios:
 pip install datasets transformers torchaudio jiwer accelerate -U
 ```
 
-For tracking and saving your model:
-
 ```python
 from huggingface_hub import notebook_login
 notebook_login()
 ```
 
-## Prepare Data, Tokenizer, Feature Extractor
+> **Best Practice:** Upload checkpoints directly to the 🤗 Hub during training for version control, Tensorboard logs, and model cards.
 
-ASR models need:
-1. A feature extractor to process speech signals into feature vectors
-2. A tokenizer to process model outputs into text
+## Architecture Overview
 
-Wav2Vec2-BERT uses:
-- [Wav2Vec2CTCTokenizer](https://huggingface.co/transformers/master/model_doc/wav2vec2.html#wav2vec2ctctokenizer)
-- [SeamlessM4TFeatureExtractor](https://huggingface.co/docs/transformers/v4.36.1/en/model_doc/seamless_m4t#transformers.SeamlessM4TFeatureExtractor)
+W2V2-BERT requires two components:
+- **Feature extractor** (`SeamlessM4TFeatureExtractor`): processes speech signal to model input format (shared with SeamlessM4T v1/v2)
+- **Tokenizer** (`Wav2Vec2CTCTokenizer`): decodes predicted output classes to transcription text
 
-# Create Wav2Vec2CTCTokenizer
+## Creating the CTC Tokenizer
 
-## Dataset Preparation
+### Data Loading
+
+Merge train+validation splits for small datasets; use test for validation:
 
 ```python
-from datasets import load_dataset, load_metric, Audio
+from datasets import load_dataset, Audio
 
-# Load Mongolian Common Voice dataset
 common_voice_train = load_dataset("mozilla-foundation/common_voice_16_0", "mn", split="train+validation", use_auth_token=True)
 common_voice_test = load_dataset("mozilla-foundation/common_voice_16_0", "mn", split="test", use_auth_token=True)
+```
 
-# Remove unnecessary columns
+Remove unnecessary columns to keep only audio and transcription:
+
+```python
 common_voice_train = common_voice_train.remove_columns(["accent", "age", "client_id", "down_votes", "gender", "locale", "segment", "up_votes"])
 common_voice_test = common_voice_test.remove_columns(["accent", "age", "client_id", "down_votes", "gender", "locale", "segment", "up_votes"])
 ```
 
-## Text Normalization
+### Text Normalization
+
+Remove special characters that don't correspond to acoustic sound units (punctuation hurts CTC without a language model):
 
 ```python
 import re
 chars_to_remove_regex = '[\,\?\.\!\-\;\:\"\"\%\'\"\�\'\»\«]'
 
 def remove_special_characters(batch):
-    # Remove special characters and convert to lowercase
     batch["sentence"] = re.sub(chars_to_remove_regex, '', batch["sentence"]).lower()
     return batch
 
@@ -80,29 +71,28 @@ common_voice_train = common_voice_train.map(remove_special_characters)
 common_voice_test = common_voice_test.map(remove_special_characters)
 ```
 
-## Vocabulary Creation
+### Building Vocabulary from Characters
+
+CTC classifies speech chunks into letters. Extract all distinct characters from train and test sets:
 
 ```python
 def extract_all_chars(batch):
-  all_text = " ".join(batch["sentence"])
-  vocab = list(set(all_text))
-  return {"vocab": [vocab], "all_text": [all_text]}
+    all_text = " ".join(batch["sentence"])
+    vocab = list(set(all_text))
+    return {"vocab": [vocab], "all_text": [all_text]}
 
-# Extract unique characters from both datasets
 vocab_train = common_voice_train.map(extract_all_chars, batched=True, batch_size=-1, keep_in_memory=True, remove_columns=common_voice_train.column_names)
 vocab_test = common_voice_test.map(extract_all_chars, batched=True, batch_size=-1, keep_in_memory=True, remove_columns=common_voice_test.column_names)
 
-# Create vocabulary dictionary
 vocab_list = list(set(vocab_train["vocab"][0]) | set(vocab_test["vocab"][0]))
 vocab_dict = {v: k for k, v in enumerate(sorted(vocab_list))}
 ```
 
-## Cleaning the Vocabulary
+> **Important:** Use `batched=True, batch_size=-1` to process all transcriptions at once for vocabulary extraction.
 
-The vocabulary contains a mix of Latin and Mongolian Cyrillic characters. For better CTC performance:
+### Cleaning Redundant Characters
 
-1. Remove Latin characters to reduce vocabulary size
-2. Focus only on the Mongolian alphabet
+**Best Practice:** CTC benefits from reduced vocabulary size — remove redundant characters (e.g., Latin characters when targeting Mongolian Cyrillic):
 
 ```python
 def remove_latin_characters(batch):
@@ -110,181 +100,117 @@ def remove_latin_characters(batch):
     return batch
 ```
 
-**Note**: CTC benefits from a reduced vocabulary size, and removing redundant characters improves performance.
+> **Tip:** Dataset cleaning is iterative. Inspect the vocabulary carefully and consult native speakers when possible to identify characters that should be removed.
 
-# Data Preprocessing for Mongolian ASR
+### Finalizing the Vocabulary
 
-## Cleaning and Vocabulary Creation
-
-```python
-# Remove Latin characters from the dataset
-common_voice_train = common_voice_train.map(remove_latin_characters)
-common_voice_test = common_voice_test.map(remove_latin_characters)
-
-# Extract unique characters to build vocabulary
-vocab_train = common_voice_train.map(extract_all_chars, batched=True, batch_size=-1, 
-                                    keep_in_memory=True, remove_columns=common_voice_train.column_names)
-vocab_test = common_voice_test.map(extract_all_chars, batched=True, batch_size=-1, 
-                                  keep_in_memory=True, remove_columns=common_voice_test.column_names)
-vocab_list = list(set(vocab_train["vocab"][0]) | set(vocab_test["vocab"][0]))
-
-# Create vocabulary dictionary
-vocab_dict = {v: k for k, v in enumerate(sorted(vocab_list))}
-```
-
-The resulting vocabulary contains all letters of the Mongolian alphabet.
-
-## Vocabulary Refinement
+After cleaning, the vocabulary contains only Mongolian Cyrillic characters plus space. Key special tokens to add:
 
 ```python
-# Replace space with a visible word delimiter
+# Replace space with visible delimiter token
 vocab_dict["|"] = vocab_dict[" "]
 del vocab_dict[" "]
 
-# Add special tokens
+# Add unknown token and CTC blank/padding token
 vocab_dict["[UNK]"] = len(vocab_dict)
-vocab_dict["[PAD]"] = len(vocab_dict)  # CTC blank token
+vocab_dict["[PAD]"] = len(vocab_dict)
+# Final vocabulary size: 37 tokens → output dimension of the linear CTC layer
 ```
 
-**Note:** Pre-processing is critical for ASR. For example, normalizing case helps the model focus on sounds rather than grammatical rules.
+> **Critical:** The `[PAD]` token serves as CTC's "blank token", a core component of the CTC algorithm. The `" "` (space) token must be kept so the model learns word boundaries.
 
-## Saving and Loading the Tokenizer
+### Creating and Saving the Tokenizer
 
 ```python
-# Save vocabulary to file
 import json
 with open('vocab.json', 'w') as vocab_file:
     json.dump(vocab_dict, vocab_file)
 
-# Create tokenizer from vocabulary
 from transformers import Wav2Vec2CTCTokenizer
-tokenizer = Wav2Vec2CTCTokenizer.from_pretrained("./", 
-                                               unk_token="[UNK]", 
-                                               pad_token="[PAD]", 
-                                               word_delimiter_token="|")
+tokenizer = Wav2Vec2CTCTokenizer.from_pretrained("./", unk_token="[UNK]", pad_token="[PAD]", word_delimiter_token="|")
 
-# Upload tokenizer to Hugging Face Hub
 repo_name = "w2v-bert-2.0-mongolian-colab-CV16.0"
 tokenizer.push_to_hub(repo_name)
 ```
 
-## Feature Extractor Setup
+### Feature Extractor and Processor
+
+The `SeamlessM4TFeatureExtractor` converts raw audio to log-mel spectrograms. Unlike the tokenizer, it doesn't need to be learned from data — load directly from the pretrained checkpoint:
 
 ```python
-# Load feature extractor from pre-trained checkpoint
-from transformers import SeamlessM4TFeatureExtractor
+from transformers import SeamlessM4TFeatureExtractor, Wav2Vec2BertProcessor
+
 feature_extractor = SeamlessM4TFeatureExtractor.from_pretrained("facebook/w2v-bert-2.0")
 
-# Combine feature extractor and tokenizer into a processor
-from transformers import Wav2Vec2BertProcessor
+# Wrap tokenizer + feature extractor into a single processor
 processor = Wav2Vec2BertProcessor(feature_extractor=feature_extractor, tokenizer=tokenizer)
 processor.push_to_hub(repo_name)
 ```
 
-The feature extractor converts raw audio to log-mel spectrograms that the model can process, while the tokenizer handles text processing. The combined processor simplifies usage by providing a single interface for both audio and text processing.
+> **Best Practice:** Upload the tokenizer and processor to the 🤗 Hub for reuse with the fine-tuned model.
 
-# Data Preprocessing for Wav2Vec2-BERT
+## Preprocessing Data
 
-## Audio Data Preparation
+### Audio Resampling
 
-The dataset contains three main columns: `sentence` (transcription), `path` (audio file location), and `audio` (audio data). Wav2Vec2-BERT requires input as a 1-dimensional array sampled at 16 kHz.
-
-```python
-# Check the audio path
-common_voice_train[0]["path"]
-# Output: '/root/.cache/huggingface/datasets/downloads/extracted/276aa682ce2b6a24934bc401b1f30e004c3fb178dd41d6295b273329f592844a/mn_train_0/common_voice_mn_18578097.mp3'
-
-# The audio column automatically loads the file
-common_voice_train[0]["audio"]
-# Shows array data with sampling_rate: 48000
-```
-
-### Resampling to 16 kHz
-
-The model requires 16 kHz audio, but our data is 48 kHz. We need to resample:
+**Critical:** The sampling rate of fine-tuning data must match the pre-training rate. W2V2-BERT expects **16kHz** input.
 
 ```python
-# Resample audio to 16 kHz
+from datasets import Audio
+
 common_voice_train = common_voice_train.cast_column("audio", Audio(sampling_rate=16_000))
 common_voice_test = common_voice_test.cast_column("audio", Audio(sampling_rate=16_000))
 ```
 
-### Verifying Audio Data
+> **Warning:** Mismatched sampling rates will severely degrade performance — the same signal at different rates has very different distributions.
 
-```python
-# Verify audio data
-rand_int = random.randint(0, len(common_voice_train)-1)
-print("Target text:", common_voice_train[rand_int]["sentence"])
-print("Input array shape:", common_voice_train[rand_int]["audio"]["array"].shape)
-print("Sampling rate:", common_voice_train[rand_int]["audio"]["sampling_rate"])
+### Processing Pipeline
 
-# Output:
-# Target text: энэ бол тэдний амжилтын бодит нууц
-# Input array shape: (74496,)
-# Sampling rate: 16000
-```
-
-## Processing Data for Training
-
-We need to process the data into the format expected by `Wav2Vec2BertForCTC`:
+The processor handles: (1) Log-Mel feature extraction from audio, (2) encoding transcriptions to label IDs.
 
 ```python
 def prepare_dataset(batch):
     audio = batch["audio"]
-    # Extract input features using processor (Log-Mel feature extraction)
     batch["input_features"] = processor(audio["array"], sampling_rate=audio["sampling_rate"]).input_features[0]
     batch["input_length"] = len(batch["input_features"])
-    
-    # Encode transcriptions to label ids
     batch["labels"] = processor(text=batch["sentence"]).input_ids
     return batch
 
-# Apply processing to all examples
 common_voice_train = common_voice_train.map(prepare_dataset, remove_columns=common_voice_train.column_names)
 common_voice_test = common_voice_test.map(prepare_dataset, remove_columns=common_voice_test.column_names)
 ```
 
-## Training Setup Requirements
+## Training Setup
 
-For training with the 🤗 Transformers Trainer, we need to:
+Four key components needed:
 
-1. **Define a data collator**: Wav2Vec2-BERT requires a special padding data collator due to the large difference between input and output lengths. Dynamic padding is more efficient.
+1. **Data collator** — Dynamic padding (pad to longest sample in batch, not overall longest) is essential due to W2V2-BERT's large input-to-output length ratio
+2. **Evaluation metric** — Word Error Rate (WER)
+3. **Pre-trained checkpoint** — Load and configure for training
+4. **Training configuration**
 
-2. **Create an evaluation metric**: The model should be evaluated on word error rate (WER).
+### Data Collator
 
-3. **Load a pre-trained checkpoint**: Configure a pre-trained model for fine-tuning.
-
-4. **Define training configuration**: Set up hyperparameters and training settings.
-
-> **Note**: The datasets library automatically handles audio loading and resampling. For custom loading, you can use the "path" column instead of the "audio" column.
-
-# Setting Up the Trainer for Wav2Vec2-BERT
-
-## Data Collator Implementation
+Custom collator pads inputs and labels separately (different modalities/lengths). Labels are padded with `-100` to ignore in loss computation:
 
 ```python
+import torch
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Union
+
 @dataclass
 class DataCollatorCTCWithPadding:
     processor: Wav2Vec2BertProcessor
     padding: Union[bool, str] = True
 
     def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
-        # Split inputs and labels since they need different padding methods
         input_features = [{"input_features": feature["input_features"]} for feature in features]
         label_features = [{"input_ids": feature["labels"]} for feature in features]
 
-        batch = self.processor.pad(
-            input_features,
-            padding=self.padding,
-            return_tensors="pt",
-        )
+        batch = self.processor.pad(input_features, padding=self.padding, return_tensors="pt")
+        labels_batch = self.processor.pad(labels=label_features, padding=self.padding, return_tensors="pt")
 
-        labels_batch = self.processor.pad(
-            labels=label_features,
-            padding=self.padding,
-            return_tensors="pt",
-        )
-        # Replace padding with -100 to ignore loss correctly
+        # replace padding with -100 to ignore loss correctly
         labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
         batch["labels"] = labels
         return batch
@@ -292,9 +218,7 @@ class DataCollatorCTCWithPadding:
 data_collator = DataCollatorCTCWithPadding(processor=processor, padding=True)
 ```
 
-This specialized data collator handles speech input and text output differently, applying separate padding functions to each modality.
-
-## Evaluation Metric
+### Evaluation Metric (WER)
 
 ```python
 wer_metric = load_metric("wer")
@@ -302,22 +226,22 @@ wer_metric = load_metric("wer")
 def compute_metrics(pred):
     pred_logits = pred.predictions
     pred_ids = np.argmax(pred_logits, axis=-1)
-
     pred.label_ids[pred.label_ids == -100] = processor.tokenizer.pad_token_id
 
     pred_str = processor.batch_decode(pred_ids)
-    # Don't group tokens when computing metrics
+    # Do NOT group tokens for labels — otherwise "hello" becomes "helo"
     label_str = processor.batch_decode(pred.label_ids, group_tokens=False)
-
     wer = wer_metric.compute(predictions=pred_str, references=label_str)
     return {"wer": wer}
 ```
 
-Word Error Rate (WER) is used as the primary evaluation metric for ASR tasks.
+### Model Configuration
 
-## Model Configuration
+**Key decisions:** All dropout disabled (small trainable subset, not prone to overfitting), gradient checkpointing for GPU memory, `add_adapter=True`, CTC loss reduction set to "mean".
 
 ```python
+from transformers import Wav2Vec2BertForCTC
+
 model = Wav2Vec2BertForCTC.from_pretrained(
     "facebook/w2v-bert-2.0",
     attention_dropout=0.0,
@@ -332,44 +256,37 @@ model = Wav2Vec2BertForCTC.from_pretrained(
 )
 ```
 
-Key configuration details:
-- Dropout layers are disabled to prevent overfitting
-- Gradient checkpointing is enabled to save GPU memory
-- CTC loss reduction is set to "mean"
-- An adapter is added for efficient fine-tuning
+> **Warning:** These hyperparameters are tuned for this specific dataset. Adapt them for other languages/datasets.
 
-## Training Arguments
+### Training Arguments
 
 ```python
+from transformers import TrainingArguments
+
 training_args = TrainingArguments(
-  output_dir=repo_name,
-  group_by_length=True,
-  per_device_train_batch_size=16,
-  gradient_accumulation_steps=2,
-  evaluation_strategy="steps",
-  num_train_epochs=10,
-  gradient_checkpointing=True,
-  fp16=True,
-  save_steps=600,
-  eval_steps=300,
-  logging_steps=300,
-  learning_rate=5e-5,
-  warmup_steps=500,
-  save_total_limit=2,
-  push_to_hub=True,
+    output_dir=repo_name,
+    group_by_length=True,          # groups similar-length samples → reduces padding waste
+    per_device_train_batch_size=16,
+    gradient_accumulation_steps=2,
+    evaluation_strategy="steps",
+    num_train_epochs=10,
+    gradient_checkpointing=True,
+    fp16=True,
+    save_steps=600,
+    eval_steps=300,
+    logging_steps=300,
+    learning_rate=5e-5,
+    warmup_steps=500,
+    save_total_limit=2,
+    push_to_hub=True,
 )
 ```
 
-Important training configurations:
-- `group_by_length=True` improves efficiency by batching samples of similar length
-- Learning rate of 5e-5 was heuristically tuned for stability
-- FP16 precision is used for faster training
-- Checkpoints are saved every 600 steps and uploaded to the Hub
-- Gradient accumulation is set to 2 steps
-
-## Trainer Initialization
+### Trainer Initialization
 
 ```python
+from transformers import Trainer
+
 trainer = Trainer(
     model=model,
     data_collator=data_collator,
@@ -381,51 +298,28 @@ trainer = Trainer(
 )
 ```
 
-## Important Notes
+> **CTC Notes:** The blank token (`[PAD]`) allows predicting repeated characters (e.g., "hello" → `[PAD] "h" "e" "e" "l" "l" [PAD] "l" "o" "o" [PAD]`). Consecutive identical tokens are grouped during decoding, but **not** when decoding labels (`group_tokens=False`).
 
-1. In CTC decoding, consecutive identical tokens are grouped as a single token, but encoded labels should not be grouped when decoding (`group_tokens=False`)
-
-2. The pad token serves as CTC's blank token, allowing the model to predict repeated characters by inserting blank tokens between them
-
-# Training and Evaluation of Wav2Vec2-BERT for Mongolian ASR
-
-## Training
-
-Training the model takes several hours depending on GPU resources. While the results are satisfactory on Common Voice's Mongolian test data, this is not an optimally fine-tuned model.
+### Training Results
 
 ```python
 trainer.train()
 ```
 
-| Step | Training Loss | Validation Loss | WER      |
-|:----:|:------------:|:---------------:|:--------:|
-| 300  | 1.712700     | 0.647740        | 0.517892 |
-| 600  | 0.349300     | 0.615849        | 0.442027 |
-| 900  | 0.180500     | 0.525088        | 0.367305 |
-| 1200 | 0.075400     | 0.528768        | 0.324016 |
+| Step | Training Loss | Validation Loss | WER |
+|:---:|:---:|:---:|:---:|
+| 300 | 1.7127 | 0.6477 | 0.5179 |
+| 600 | 0.3493 | 0.6158 | 0.4420 |
+| 900 | 0.1805 | 0.5251 | 0.3673 |
+| 1200 | 0.0754 | 0.5288 | 0.3240 |
 
-The training shows good progress with decreasing loss and WER. Notably, this performance is comparable to OpenAI's whisper-large-v3 model, which achieved a final WER of 33.3% on the same dataset. This demonstrates that **Wav2Vec2-BERT can achieve performance equivalent to state-of-the-art models for low-resource languages**.
-
-## Sharing the Model
-
-Upload the trained model to the Hugging Face Hub:
+Final WER of **32.4%** is comparable to Whisper-large-v3 fine-tuned on the same data (**33.3% WER**), demonstrating near state-of-the-art performance on low-resource languages.
 
 ```python
 trainer.push_to_hub()
 ```
 
-Others can then use your model:
-
-```python
-from transformers import AutoModelForCTC, Wav2Vec2BertProcessor
-
-model = AutoModelForCTC.from_pretrained("your-username/model-name")
-processor = Wav2Vec2BertProcessor.from_pretrained("your-username/model-name")
-```
-
-## Evaluation
-
-Let's verify the model's performance on Mongolian speech:
+### Evaluation / Inference
 
 ```python
 model = Wav2Vec2BertForCTC.from_pretrained(repo_name).to("cuda")
@@ -438,80 +332,12 @@ with torch.no_grad():
     logits = model(input_features).logits
 
 pred_ids = torch.argmax(logits, dim=-1)[0]
-
 print(processor.decode(pred_ids))
-print(processor.decode(sample["labels"]).lower())
 ```
 
-Output:
-```
-эрчүүдийн ганцаардлыг эмэхтэйчүүд ойлгох нь ховор юм
-эрчүдийн ганцардлыг эмэгтэйчүд ойлгох нь ховор юм
-```
+> **Tip:** Using a [language model](https://huggingface.co/blog/wav2vec2-with-ngram) for decoding would further improve performance.
 
-The transcription is recognizable but not perfect. Performance could be improved with:
-- Longer training
-- Better data pre-processing
-- Using a language model for decoding
+## Scaling-Up Tips (from HF experts)
 
-## Scaling-up Training: Best Practices
 
-### Dataset-Related Tips
-
-1. **Use lowercase, unpunctuated transcriptions** for CTC ASR, as the model should focus on acoustic prediction rather than language modeling.
-
-2. **Remove low-frequency characters** from the tokenizer vocabulary:
-   - Very low-frequency characters can cause loss spikes during training
-   - Characters that appear rarely should be treated as errors and classified as `"[UNK]"`
-   - Common Voice datasets often contain "wrong" characters from other languages
-
-3. **Use the newest Common Voice version** (CV16) which provides more hours of data for many languages, enabling more efficient models for low-resource languages.
-
-# Training-related Tips for W2V-BERT
-
-## Optimal CTC Token Duration
-
-The ideal ratio of duration seen per CTC token should be **10 to 35 ms**. This corresponds to a fraction of the time needed to pronounce a phoneme.
-
-**Problem Example:** In one training run, the loss curve initially decreased but later exploded because each CTC token was seeing 30-60 ms of signal (too long).
-
-**Solution:** Add a convolutional adapter layer to sub-sample the encoder hidden states:
-
-```python
-# Configure adapter in Wav2Vec2BertConfig
-config = Wav2Vec2BertConfig.from_pretrained(
-    "facebook/w2v-bert-2.0",
-    add_adapter=True  # Add this parameter to reduce time dimension
-)
-```
-
-## Addressing Under-training Issues
-
-Signs of under-training:
-- Loss curve stops during steep descent
-- Lack of smoothness in the loss curve
-
-**Solutions:**
-1. **Adjust warm-up rate:**
-   - Keep warm-up ratio between 5-15%
-   - Scale up the number of epochs
-   - Warm-up steps help align new language-model head weights with the pre-trained model
-
-2. **Tune optimizer parameters:**
-   - Adjust AdamW's β₂ parameter (typically 0.95-0.98) to improve loss curve smoothness
-
-```python
-# Example of optimizer configuration
-optimizer = torch.optim.AdamW(
-    model.parameters(),
-    lr=5e-5,
-    betas=(0.9, 0.98)  # Adjusted β₂ for smoother loss curve
-)
-```
-
-## Related Resources
-- [Official paper](https://huggingface.co/papers/2305.13516)
-- [Original codebase](https://ai.meta.com/research/publications/seamless-multilingual-expressive-and-streaming-speech-translation/)
-- [Transformers Docs](https://huggingface.co/docs/transformers/main/en/model_doc/wav2vec2-bert)
-- [XLS-R blog post](https://huggingface.co/blog/fine-tune-xlsr-wav2vec2)
-- [MMS blog post](https://huggingface.co/blog/mms_adapters)
+...(truncated)

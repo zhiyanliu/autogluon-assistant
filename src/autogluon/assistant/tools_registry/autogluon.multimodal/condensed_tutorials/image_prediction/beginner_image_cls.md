@@ -1,97 +1,72 @@
-# Condensed: ```python
+# Condensed: Use AutoMM to Fit Models
 
-Summary: This tutorial demonstrates image classification using AutoGluon MultiModal, covering implementation of a complete workflow from setup to deployment. It teaches how to: load image data (both file paths and bytearrays), train classification models with minimal code using MultiModalPredictor, evaluate model performance, make predictions on new images, extract feature embeddings for transfer learning, and save/load models. Key features include time-constrained training, handling multiple input formats, probability-based predictions, and feature extraction capabilities - all with AutoGluon's simplified API that abstracts away complex deep learning implementation details.
+Summary: This tutorial demonstrates image classification using AutoGluon's `MultiModalPredictor`, covering the full pipeline: loading image datasets (supporting both file paths and bytearrays interchangeably), training with `predictor.fit()` using `time_limit` control, evaluating with `predictor.evaluate()`, predicting labels/probabilities via `predict()`/`predict_proba()`, extracting image embeddings (512–2048 dim) with `extract_embedding()`, and saving/loading models. It helps with coding tasks involving quick image classifier training, inference on single images using dict input format (`{'image': [path]}`), and feature extraction. Key note: path-trained and bytearray inputs are interchangeable across all methods.
 
 *This is a condensed version that preserves essential implementation details and context.*
 
-# Image Classification with AutoGluon MultiModal
+# AutoGluon MultiModal Image Classification
 
-## Setup and Data Loading
+## Setup & Data Loading
 
 ```python
 !pip install autogluon.multimodal
+```
 
-import warnings
-warnings.filterwarnings('ignore')
-import pandas as pd
-
+```python
 from autogluon.multimodal.utils.misc import shopee_dataset
 download_dir = './ag_automm_tutorial_imgcls'
 train_data_path, test_data_path = shopee_dataset(download_dir)
 ```
 
-AutoGluon supports both image paths and bytearrays:
+Dataset: 800 rows, 2 columns (**image** — absolute paths, **label** — target). Supports both image paths and bytearrays:
 
 ```python
-# Load dataset with bytearrays
 train_data_byte, test_data_byte = shopee_dataset(download_dir, is_bytearray=True)
 ```
 
-## Training a Model
+## Training
 
 ```python
 from autogluon.multimodal import MultiModalPredictor
 import uuid
+
 model_path = f"./tmp/{uuid.uuid4().hex}-automm_shopee"
 predictor = MultiModalPredictor(label="label", path=model_path)
-predictor.fit(
-    train_data=train_data_path,
-    time_limit=30, # seconds
-)
+predictor.fit(train_data=train_data_path, time_limit=30)
 ```
 
-Key parameters:
-- `label`: Column name containing target variable
-- `path`: Directory for saving models and outputs
-- `time_limit`: Training time in seconds
+- **label**: target column name
+- **path**: model save directory
+- **time_limit**: training budget in seconds
 
-## Evaluation
+## Evaluate, Predict & Extract Embeddings
 
 ```python
-# Evaluate with image paths
+# Evaluate (works with both path and bytearray data)
 scores = predictor.evaluate(test_data_path, metrics=["accuracy"])
-print('Top-1 test acc: %.3f' % scores["accuracy"])
 
-# Evaluate with bytearrays
-scores = predictor.evaluate(test_data_byte, metrics=["accuracy"])
-print('Top-1 test acc: %.3f' % scores["accuracy"])
-```
-
-## Prediction
-
-```python
-# Predict label for a single image
-image_path = test_data_path.iloc[0]['image']
+# Predict single image
 predictions = predictor.predict({'image': [image_path]})
-
-# Get class probabilities
 proba = predictor.predict_proba({'image': [image_path]})
 
-# Works with bytearrays too
-image_byte = test_data_byte.iloc[0]['image']
-predictions = predictor.predict({'image': [image_byte]})
-proba = predictor.predict_proba({'image': [image_byte]})
-```
-
-## Feature Extraction
-
-```python
-# Extract embeddings from images
+# Extract embeddings (512–2048 dim vector depending on model)
 feature = predictor.extract_embedding({'image': [image_path]})
-print(feature[0].shape)  # N-dimensional feature vector (typically 512-2048)
-
-# Works with bytearrays too
-feature = predictor.extract_embedding({'image': [image_byte]})
+print(feature[0].shape)
 ```
+
+**Key detail**: Path-trained models work with bytearray inputs and vice versa — all predict/evaluate/extract_embedding methods accept either format interchangeably.
 
 ## Save and Load
 
+Model auto-saves after `fit()`. Reload with:
+
 ```python
-# Model is automatically saved during fit()
 loaded_predictor = MultiModalPredictor.load(model_path)
-load_proba = loaded_predictor.predict_proba({'image': [image_path]})
 ```
 
-⚠️ **Warning**: `MultiModalPredictor.load()` uses `pickle` module which can be insecure. Only load models from trusted sources.
+> ⚠️ **Warning**: `MultiModalPredictor.load()` uses `pickle` implicitly. **Never load data from untrusted sources** — malicious pickle data can execute arbitrary code during unpickling.
 
-For customization options, refer to the "Customize AutoMM" documentation.
+## Further Resources
+
+- [AutoMM Examples](https://github.com/autogluon/autogluon/tree/master/examples/automm)
+- [Customize AutoMM](../advanced_topics/customization.ipynb)

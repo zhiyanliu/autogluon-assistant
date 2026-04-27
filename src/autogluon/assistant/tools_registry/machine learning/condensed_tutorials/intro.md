@@ -1,7 +1,9 @@
 # Condensed: Intro to Use Machine Learning or Deep Learning algorithms
 
-Summary: You can use any machine learning or deep learning algorithms to complete the tasks. Make sure you have them installed in bash script.
+Summary: This tutorial briefly covers the use of machine learning and deep learning algorithms for completing tasks. It provides guidance that any ML/DL algorithm can be employed, with the key requirement that all necessary dependencies must be installed via a bash script. This tutorial can help with setting up ML/DL environments and ensuring proper dependency management for code execution pipelines.
 
-# Intro to Use Machine Learning or Deep Learning algorithms
+*This is a condensed version that preserves essential implementation details and context.*
 
-You can use any machine learning or deep learning algorithms to complete the tasks. Make sure you have them installed in bash script.
+# Using ML/DL Algorithms
+
+You can use any ML or deep learning algorithms for tasks. Ensure all dependencies are installed via your bash script.

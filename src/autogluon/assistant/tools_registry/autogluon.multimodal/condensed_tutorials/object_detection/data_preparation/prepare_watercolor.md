@@ -1,56 +1,30 @@
-# Condensed: ```
+# Condensed: Download with Bash Script
 
-Summary: This tutorial demonstrates how to prepare the Watercolor object detection dataset using AutoGluon. It covers two implementation methods: using AutoGluon CLI commands or a bash script, with options for specifying output paths. The tutorial explains that Watercolor uses VOC format but recommends converting to COCO format for use with AutoGluon MultiModalPredictor. It references additional resources for COCO format conversion and customization. This knowledge helps with dataset preparation tasks for object detection models, specifically working with the Watercolor dataset in AutoGluon's ecosystem.
+Summary: This tutorial covers downloading and preparing the Watercolor object detection dataset for use with AutoGluon's MultiModalPredictor. It demonstrates two download methods: AutoGluon's Python CLI (`prepare_detection_dataset` module) and a bash script, both supporting custom output paths. The dataset uses VOC format (Annotations, ImageSets, JPEGImages directories), though AutoGluon strongly recommends converting to COCO format for full support. This tutorial helps with tasks involving detection dataset preparation, VOC-to-COCO format conversion awareness, and AutoGluon MultiModal detection pipeline setup.
 
 *This is a condensed version that preserves essential implementation details and context.*
 
-# Preparing Detection Dataset - Watercolor
+## Watercolor Dataset Setup
 
-## Download Methods
+### Download Options
 
-### Using AutoGluon CLI
-
-```python
-# Basic usage - extracts to current directory
-python3 -m autogluon.multimodal.cli.prepare_detection_dataset --dataset_name watercolor
-
-# Specify output path
-python3 -m autogluon.multimodal.cli.prepare_detection_dataset --dataset_name watercolor --output_path ~/data
-
-# Short form
+**Python CLI:**
+```
 python3 -m autogluon.multimodal.cli.prepare_detection_dataset -d watercolor -o ~/data
 ```
 
-### Using Bash Script
-
-```bash
-# Extract to current directory
-bash download_watercolor.sh
-
-# Extract to specific path
+**Bash:**
+```
 bash download_watercolor.sh ~/data
 ```
 
+Extracted folder `watercolor` contains: `Annotations  ImageSets  JPEGImages`
+
 ## Dataset Format
 
-Watercolor uses VOC format with the following structure:
+Watercolor uses VOC format. **⚠️ AutoGluon strongly recommends COCO format instead.** See [Prepare COCO2017](prepare_coco17.ipynb) and [Convert to COCO Format](convert_data_to_coco_format.ipynb) for conversion guidance.
+
+VOC format has limited support — input must be the dataset root containing:
 ```
 Annotations  ImageSets  JPEGImages
-```
-
-**Important:** AutoGluon MultiModalPredictor strongly recommends using COCO format instead of VOC. See [AutoMM Detection - Prepare COCO2017 Dataset](prepare_coco17.ipynb) and [Convert Data to COCO Format](convert_data_to_coco_format.ipynb) for conversion instructions.
-
-## Additional Resources
-- For more examples: [AutoMM Examples](https://github.com/autogluon/autogluon/tree/master/examples/automm)
-- For customization: [Customize AutoMM](../../advanced_topics/customization.ipynb)
-
-## Citation
-```
-@inproceedings{inoue_2018_cvpr,
-    author = {Inoue, Naoto and Furuta, Ryosuke and Yamasaki, Toshihiko and Aizawa, Kiyoharu},
-    title = {Cross-Domain Weakly-Supervised Object Detection Through Progressive Domain Adaptation},
-    booktitle = {The IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
-    month = {June},
-    year = {2018}
-}
 ```

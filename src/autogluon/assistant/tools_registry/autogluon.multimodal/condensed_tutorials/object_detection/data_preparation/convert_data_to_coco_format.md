@@ -1,70 +1,51 @@
-# Condensed: ```
+# Condensed: 2. Formatting ``*_labels.json``
 
-Summary: This tutorial explains the COCO dataset format for object detection, detailing the required directory structure and JSON schema with specific fields for images, categories, and annotations (including bounding boxes). It covers how to convert VOC format datasets to COCO using AutoGluon's CLI tool, with both custom and predefined dataset splits. The tutorial also mentions conversion options for other formats using tools like FiftyOne. This knowledge is essential for preparing object detection datasets, handling annotation formats, and implementing data conversion pipelines for training and evaluation of object detection models.
+Summary: This tutorial covers COCO format dataset structure and JSON annotation schema for object detection using AutoGluon's AutoMM. It details the required directory layout (images/ and annotations/ folders), the complete `*_labels.json` specification including images, annotations (with bbox, segmentation, category_id), and categories fields, noting which fields are optional vs. required for training, evaluation, and prediction. It provides VOC-to-COCO conversion via `autogluon.multimodal.cli.voc2coco` with customizable train/val/test split ratios, and mentions FiftyOne for converting CVAT, YOLO, and KITTI formats to COCO.
 
 *This is a condensed version that preserves essential implementation details and context.*
 
-# Dataset Format for Object Detection
+# COCO Format Dataset Structure & Conversion
 
 ## Directory Structure
 ```
 <dataset_dir>/
     images/
         <imagename0>.<ext>
-        <imagename1>.<ext>
         ...
     annotations/
         train_labels.json
         val_labels.json
         test_labels.json
-        ...
 ```
 
-## COCO Format JSON Structure
-Required JSON structure for `*_labels.json`:
+## `*_labels.json` Format
 
 ```javascript
 {
-    "info": info,  // optional
-    "licenses": [license],  // optional
-    "images": [image],  // required - list of all images
-    "annotations": [annotation],  // required for training/evaluation
-    "categories": [category]  // required for training/evaluation
+    "info": info,              // optional for AutoMM
+    "licenses": [license],     // optional for AutoMM
+    "images": [image],         // required (training, eval, prediction)
+    "annotations": [annotation], // required (training, eval only)
+    "categories": [category]   // required (training, eval only)
 }
-```
 
-### Key Components
-
-```javascript
 image = {
-    "id": int, 
-    "width": int, 
-    "height": int, 
-    "file_name": str, 
-    "license": int,  // license id
-    "date_captured": datetime,
+    "id": int, "width": int, "height": int,
+    "file_name": str, "license": int, "date_captured": datetime
 }
 
-category = {
-    "id": int, 
-    "name": str, 
-    "supercategory": str,
-}
+category = { "id": int, "name": str, "supercategory": str }
 
 annotation = {
-    "id": int, 
-    "image_id": int,  // image id this annotation belongs to
-    "category_id": int,  // category id this annotation belongs to
-    "segmentation": RLE or [polygon], 
-    "area": float, 
-    "bbox": [x,y,width,height], 
-    "iscrowd": int,  // 0 or 1
+    "id": int, "image_id": int, "category_id": int,
+    "segmentation": RLE or [polygon],
+    "area": float, "bbox": [x,y,width,height], "iscrowd": 0|1
 }
 ```
 
-## Converting VOC Format to COCO Format
+## Converting VOC to COCO Format
 
-### VOC Directory Structure
+Expected VOC structure:
 ```
 <path_to_VOCdevkit>/
     VOC2007/
@@ -72,20 +53,16 @@ annotation = {
         ImageSets/
         JPEGImages/
         labels.txt
-    VOC2012/
-        ...
 ```
 
-### Conversion Command
+**Conversion commands:**
 ```python
-# Custom train/val/test split:
+# Custom train/val/test ratio (test_ratio = 1 - train_ratio - val_ratio)
 python3 -m autogluon.multimodal.cli.voc2coco --root_dir <root_dir> --train_ratio <train_ratio> --val_ratio <val_ratio>
-
-# Use dataset's provided splits:
+# Use dataset-provided splits
 python3 -m autogluon.multimodal.cli.voc2coco --root_dir <root_dir>
 ```
 
-For more details, see tutorial: [AutoMM Detection - Convert VOC Format Dataset to COCO Format](voc_to_coco.ipynb).
+## Other Format Conversions
 
-## Converting Other Formats
-You can write custom code to convert your data to COCO format or use third-party tools like [FiftyOne](https://github.com/voxel51/fiftyone) which supports converting formats such as CVAT, YOLO, and KITTI to COCO format.
+Any data conforming to COCO format works with AutoMM. Third-party tools like [FiftyOne](https://github.com/voxel51/fiftyone) can convert CVAT, YOLO, KITTI, etc. to COCO format.

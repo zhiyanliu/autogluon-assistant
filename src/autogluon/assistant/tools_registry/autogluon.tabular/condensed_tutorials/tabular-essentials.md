@@ -1,88 +1,63 @@
-# Condensed: ```python
+# Condensed: Training
 
-Summary: This tutorial covers AutoGluon's TabularPredictor for automated machine learning on tabular data. It demonstrates implementation of quick model training with minimal code, automated handling of data preprocessing, and model deployment. Key functionalities include: loading tabular data, training multiple models simultaneously, making predictions, evaluating performance, and saving/loading models. The tutorial explains different performance presets (from "medium" to "extreme"), feature importance analysis, and optimization strategies for classification and regression tasks. AutoGluon automatically handles missing values, feature engineering, and model selection, making it valuable for rapid prototyping and production-quality predictive modeling with just a few lines of code.
+Summary: This tutorial covers AutoGluon's TabularPredictor for automated tabular ML, including classification and regression. It demonstrates data loading (CSV/Parquet), training with `fit()`, prediction (`predict`/`predict_proba`), evaluation (`evaluate`/`leaderboard`), model saving/loading, and feature importance analysis. Key configurations include `presets` (`medium`, `good`, `high`, `best`, `extreme`), `eval_metric` (e.g., `roc_auc`, `f1`, `mean_absolute_error`), and `time_limit`. It covers strategies for maximizing accuracy: using `presets='best'`, avoiding manual preprocessing/HPO, and letting AutoGluon handle ensembling, feature engineering, and data splitting. Useful for implementing end-to-end AutoML pipelines with minimal code.
 
 *This is a condensed version that preserves essential implementation details and context.*
 
-# AutoGluon TabularPredictor Quick Start
+# AutoGluon Tabular Quick Start
 
-## Setup and Installation
+## Setup & Data Loading
 
 ```python
 !pip install autogluon.tabular[all]
 from autogluon.tabular import TabularDataset, TabularPredictor
-```
 
-## Loading Data
-
-```python
-# Load data (TabularDataset is essentially a Pandas DataFrame)
 train_data = TabularDataset('https://autogluon.s3.amazonaws.com/datasets/Inc/train.csv')
-train_data = train_data.sample(n=500, random_state=0)  # Subsample for demo
-
-# Identify the target column
+train_data = train_data.sample(n=500, random_state=0)  # subsample for demo
 label = 'class'
-print(f"Unique classes: {list(train_data[label].unique())}")
 ```
 
-**Important:** AutoGluon works with raw data - avoid preprocessing like missing value imputation or one-hot-encoding as AutoGluon handles these automatically.
+**Best Practice:** Don't preprocess data (no imputation, no one-hot-encoding) — AutoGluon handles this automatically.
 
-## Training
+## Training & Prediction
 
 ```python
-# Initialize and fit in one line
 predictor = TabularPredictor(label=label).fit(train_data)
-```
 
-## Prediction
-
-```python
-# Load test data
 test_data = TabularDataset('https://autogluon.s3.amazonaws.com/datasets/Inc/test.csv')
-
-# Make predictions
 y_pred = predictor.predict(test_data)
-y_pred_proba = predictor.predict_proba(test_data)  # For probability predictions
+y_pred_proba = predictor.predict_proba(test_data)
 ```
 
 ## Evaluation
 
 ```python
-# Evaluate overall performance
-predictor.evaluate(test_data)
-
-# Evaluate individual models
-predictor.leaderboard(test_data)
+predictor.evaluate(test_data)       # Overall metrics
+predictor.leaderboard(test_data)    # Per-model evaluation
 ```
 
-## Saving and Loading
+## Loading a Saved Predictor
 
 ```python
-# The predictor is automatically saved during training
-predictor_path = predictor.path
-
-# Load the predictor in a new session
-predictor = TabularPredictor.load(predictor_path)
+predictor = TabularPredictor.load(predictor.path)
 ```
 
-⚠️ **WARNING:** `TabularPredictor.load()` uses the `pickle` module which can be insecure. Only load data from trusted sources.
+> ⚠️ **Warning:** `TabularPredictor.load()` uses `pickle` implicitly. Never load data from untrusted sources — arbitrary code execution is possible during unpickling.
 
-## Minimal Usage
-
-For your own datasets, you can use just two lines of code:
+## Minimal Template
 
 ```python
 from autogluon.tabular import TabularPredictor
-predictor = TabularPredictor(label='your_target_column').fit(train_data='your_data.csv')
+predictor = TabularPredictor(label=<variable-name>).fit(train_data=<file-name>)
 ```
 
-Note: This simple call is intended for prototyping. For better performance, specify the `presets` parameter to `fit()` and the `eval_metric` parameter to `TabularPredictor()`.
+**Note:** This basic `fit()` call is for prototyping. Use `presets` parameter in `fit()` and `eval_metric` in `TabularPredictor()` to maximize performance.
 
-# AutoGluon Tabular Fit Process and Presets
+## How `fit()` Works
 
-## Understanding the `fit()` Process
+AutoGluon automatically infers problem type (e.g., binary classification), feature types, evaluation metric, and handles missing data/rescaling. Without explicit validation data, it performs a random train/validation split.
 
-AutoGluon automatically handles binary classification problems, inferring feature types and addressing common issues like missing data and feature scaling:
+By default, AutoGluon trains **multiple model types** (neural networks, tree ensembles, etc.), automates hyperparameter tuning, and ensembles them. Training parallelizes across threads via [Ray](https://www.ray.io/). Control runtime with `time_limit` in `fit()`.
 
 ```python
 print("AutoGluon infers problem type is: ", predictor.problem_type)
@@ -90,116 +65,82 @@ print("AutoGluon identified the following types of features:")
 print(predictor.feature_metadata)
 ```
 
-During training:
-- AutoGluon automatically splits data into training/validation sets when not specified
-- Trains multiple models of various types (neural networks, tree ensembles, etc.)
-- Automatically tunes hyperparameters to maximize validation performance
-- Parallelizes training across multiple threads using Ray
-- Creates model ensembles to improve predictive performance
-
-## Data Transformation and Feature Importance
-
-View the transformed data in AutoGluon's internal representation:
+### Feature Inspection & Importance
 
 ```python
-test_data_transform = predictor.transform_features(test_data)
-test_data_transform.head()
+test_data_transform = predictor.transform_features(test_data)  # View internal numeric representation
+predictor.feature_importance(test_data)  # Estimate feature importance
 ```
 
-Analyze feature importance to understand model decisions:
+The `importance` column estimates how much the eval metric drops if the feature is removed. **Negative values suggest removing the feature may improve results.**
+
+### Model Selection
 
 ```python
-predictor.feature_importance(test_data)
+predictor.model_best                          # Best model (default for predict)
+predictor.predict(test_data, model='LightGBM')  # Predict with specific model
+predictor.model_names()                        # List all trained models
 ```
 
-The `importance` column estimates how much the evaluation metric would drop if the feature were removed.
+**Important:** Default metric (accuracy for binary classification) may not match your application — specify `eval_metric` in `TabularPredictor()` when you know the target metric.
 
-## Working with Models
+## Presets
 
-By default, AutoGluon predicts with the best-performing model:
+Specified via `presets` argument in `.fit()`. Default is `medium`.
 
-```python
-predictor.model_best  # View the best model
-predictor.model_names()  # List all trained models
-```
-
-Specify a particular model for predictions:
-```python
-predictor.predict(test_data, model='LightGBM')
-```
-
-## Presets for Different Use Cases
-
-| Preset | Model Quality | Use Cases | Fit Time | Inference Time | Disk Usage |
-|--------|---------------|-----------|----------|----------------|------------|
-| extreme | Far better than best on datasets <30K samples | Cutting edge with tabular foundation models (TabPFNv2, TabICL, Mitra, TabM). Requires GPU. | 4x+ | 32x+ | 8x+ |
-| best | State-of-the-art | For serious usage, competition-winning quality | 16x+ | 32x+ | 16x+ |
-| high | Better than good | Powerful, portable solution with fast inference | 16x+ | 4x | 2x |
-| good | Stronger than other AutoML frameworks | Fast inference for large-scale/edge deployment | 16x | 2x | 0.1x |
-| medium | Competitive with top AutoML frameworks | Initial prototyping, baseline performance | 1x | 1x | 1x |
+| Preset | Quality | Fit Time | Inference Time | Disk |
+|:-------|:--------|:---------|:---------------|:-----|
+| **extreme** | Far better than best (<30K samples) | 4x+ | 32x+ | 8x+ |
+| **best** | SOTA, preferred for serious usage | 16x+ | 32x+ | 16x+ |
+| **high** | Better than good; fast inference | 16x+ | 4x | 2x |
+| **good** | Stronger than other AutoML frameworks | 16x | 2x | 0.1x |
+| **medium** | Competitive; prototyping baseline | 1x | 1x | 1x |
 
 **Recommended workflow:**
-1. Start with `medium` preset for initial prototyping
-2. Move to `best` preset with at least 16x the time limit for production-quality models
-3. Try `extreme` preset on GPU for small datasets (<30K samples)
-4. Consider `high` or `good` presets if inference speed or model size are critical
+1. Start with `medium` to prototype and identify data issues
+2. Move to `best` with ≥16x the `time_limit` used in `medium`
+3. Try `high`/`good` if specific inference speed or disk constraints exist
+4. **`extreme`** (new v1.4): Uses tabular foundation models (TabPFNv2, TabICL, Mitra) + TabM. **Requires GPU.** Install via `pip install autogluon[tabarena]`
 
-For GPU users, install additional dependencies with: `pip install autogluon[tabarena]`
+**Best Practice:** Always hold out test data that AutoGluon never sees during training to validate performance.
 
-# Maximizing Predictive Performance
+## Maximizing Predictive Performance
 
-For best predictive accuracy with AutoGluon, use this approach:
+**⚠️ Do not use default `fit()` arguments for benchmarking or production accuracy.**
 
 ```python
-time_limit = 60  # set to maximum time you're willing to wait (in seconds)
-metric = 'roc_auc'  # specify your evaluation metric
+time_limit = 60  # set to longest acceptable wait (seconds)
+metric = 'roc_auc'
 predictor = TabularPredictor(label, eval_metric=metric).fit(train_data, time_limit=time_limit, presets='best')
-```
-
-```python
 predictor.leaderboard(test_data)
 ```
 
-## Key Strategies for Maximum Accuracy
+**Key strategies:**
+- **`presets='best'`**: Enables stacking/bagging ensembles for maximum accuracy. For fast deployment: `presets=['good', 'optimize_for_deployment']`
+- **`eval_metric`**: Specify your application's metric — e.g., `'f1'`, `'roc_auc'`, `'log_loss'`, `'mean_absolute_error'`, `'median_absolute_error'`, or a [custom metric](advanced/tabular-custom-metric.ipynb)
+- **Include all data in `train_data`**, don't provide `tuning_data` — AutoGluon splits more intelligently on its own
+- **Don't specify `hyperparameter_tune_kwargs`** — ensembling outperforms HPO under limited time budgets (use HPO only for single-model deployment)
+- **Don't specify `hyperparameters`** — let AutoGluon adaptively select models
+- **Set `time_limit` as high as feasible** — performance improves with more time
 
-- Use `presets='best'` to enable powerful model ensembles with stacking/bagging
-  - Default is `'medium'` (less accurate but faster)
-  - For faster deployment with lower accuracy: `presets=['good', 'optimize_for_deployment']`
+## Regression
 
-- Specify `eval_metric` based on your evaluation needs:
-  - Classification: `'f1'`, `'roc_auc'`, `'log_loss'`
-  - Regression: `'mean_absolute_error'`, `'median_absolute_error'`
-  - Custom metrics are supported (see [Adding a custom metric](advanced/tabular-custom-metric.ipynb))
-
-- Include all data in `train_data` without providing `tuning_data`
-
-- Avoid specifying `hyperparameter_tune_kwargs` (model ensembling is often superior)
-
-- Don't specify `hyperparameters` (let AutoGluon select models adaptively)
-
-- Set `time_limit` to the maximum time you can allow (longer time = better performance)
-
-## Regression Example
-
-To predict a numeric column like `age`:
+AutoGluon auto-detects regression tasks from numeric labels:
 
 ```python
-predictor_age = TabularPredictor(label=age_column, path="agModels-predictAge").fit(train_data, time_limit=60)
+predictor_age = TabularPredictor(label='age', path="agModels-predictAge").fit(train_data, time_limit=60)
 predictor_age.evaluate(test_data)
 predictor_age.leaderboard(test_data)
 ```
 
-AutoGluon automatically:
-- Detects regression tasks from the data
-- Reports appropriate metrics (RMSE by default)
-- Flips signs for metrics where lower is better (internally assumes higher is better)
+**Note:** For metrics where lower is better (e.g., RMSE), AutoGluon flips the sign and prints negative values during training (internally assumes higher = better). Override default with `eval_metric='mean_absolute_error'`, etc.
 
-## Data Format Support
-- Pandas DataFrames
-- CSV files
-- Parquet files
+## Data Formats
+
+Supported: **pandas DataFrames**, **CSV**, **Parquet**. Multi-table data must be joined into a single table with rows as independent observations and columns as features.
 
 ## Advanced Usage
-- For more advanced examples: [In Depth Tutorial](tabular-indepth.ipynb)
-- For deployment optimization: [Deployment Optimization Tutorial](advanced/tabular-deployment.ipynb)
-- For custom models: [Custom Model](advanced/tabular-custom-model.ipynb) and [Custom Model Advanced](advanced/tabular-custom-model-advanced.ipynb) tutorials
+
+- [In Depth Tutorial](tabular-indepth.ipynb) — advanced options
+- [Deployment Optimization](advanced/tabular-deployment.ipynb)
+- [Custom Models](advanced/tabular-custom-model.ipynb)

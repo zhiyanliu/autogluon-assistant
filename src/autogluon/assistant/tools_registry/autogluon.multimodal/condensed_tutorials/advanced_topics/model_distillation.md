@@ -1,54 +1,18 @@
-# Condensed: ```python
+# Condensed: Load the Teacher Model
 
-Summary: This tutorial demonstrates knowledge distillation in AutoGluon MultiModal, showing how to transfer knowledge from a larger teacher model to a smaller student model. It covers implementation techniques for loading pre-trained models, configuring distillation, and evaluating performance. The code helps with creating efficient, smaller models that maintain accuracy by learning from larger ones. Key features include: simple distillation activation via the teacher_predictor parameter, working with BERT models of different sizes (12-layer to 6-layer), dataset preparation for NLP tasks, and model evaluation. The implementation focuses on practical application with minimal configuration requirements.
+Summary: This tutorial demonstrates knowledge distillation using AutoGluon's `MultiModalPredictor`, compressing a 12-layer BERT teacher into a 6-layer BERT student for text classification (QNLI). It covers loading HuggingFace datasets, preparing train/valid/test splits, loading a pre-trained teacher model via `MultiModalPredictor.load()`, and performing distillation by passing `teacher_predictor` to the student's `.fit()` method. Key configurations include setting the student backbone via `model.hf_text.checkpoint_name` and training epochs via `optim.max_epochs`. Useful for implementing model compression, teacher-student training pipelines, and NLP classification with AutoGluon MultiModal.
 
 *This is a condensed version that preserves essential implementation details and context.*
 
-1. # Knowledge Distill. Distillation.md
+# AutoGluon Knowledge Distillation
 
-# Knowledge Distillombinator: Distillabg.md
+## Setup & Data Preparation
 
-# Knowledge Distillation.md
-
-# Knowledge Distillabg.md/1. Distillation.md/1. Distillnternationlation.md
-
-# Knowledge Distillation.md
-
-# Knowledge Distillation.md
-
-# Knowledge Distillation.md
-
-# Knowledge Distillation.md
-
-# Knowledge Distillation.md
-
-# Knowledge Distillation.md
-
-# Knowledge Distillation.md
-
-# Knowledge Distillation.md
-
-# Knowledge Distillation.md
-
-# KnowledgeIllation.md
-
-# Knowledge Distillation.md
-
-# Knowledge Distillation.md
-
-# Knowledge Distillation.md
-
-# KnowledgeIllation.md
-
-# Knowledge Distillation in AutoGluon MultiModal
-
-## Setup and Data Preparation
 ```python
-# Install required packages
 !pip install autogluon.multimodal
+```
 
-# Load and prepare dataset
-import datasets
+```python
 from datasets import load_dataset
 from sklearn.model_selection import train_test_split
 
@@ -58,20 +22,23 @@ train_df, valid_df = train_test_split(train_valid_df, test_size=0.2, random_stat
 test_df = dataset["validation"].to_pandas()[["question", "sentence", "label"]].sample(1000, random_state=123)
 ```
 
-## Loading the Teacher Model
+## Load Pre-trained Teacher Model
+
+Teacher uses `google/bert_uncased_L-12_H-768_A-12` (12-layer BERT), student uses `google/bert_uncased_L-6_H-768_A-12` (6-layer BERT).
+
 ```python
-# Download pre-trained teacher model
 !wget --quiet https://automl-mm-bench.s3.amazonaws.com/unit-tests/distillation_sample_teacher.zip -O distillation_sample_teacher.zip
 !unzip -q -o distillation_sample_teacher.zip -d .
 
-# Load the teacher model
 from autogluon.multimodal import MultiModalPredictor
 teacher_predictor = MultiModalPredictor.load("ag_distillation_sample_teacher/")
 ```
 
-## Distilling Knowledge to Student Model
+## Distill to Student
+
+Pass `teacher_predictor` to `.fit()` — the student is trained by matching the teacher's prediction/feature maps, which can outperform direct finetuning.
+
 ```python
-# Create and train student model with knowledge distillation
 student_predictor = MultiModalPredictor(label="label")
 student_predictor.fit(
     train_df,
@@ -82,19 +49,12 @@ student_predictor.fit(
         "optim.max_epochs": 2,
     }
 )
-
-# Evaluate the student model
 print(student_predictor.evaluate(data=test_df))
 ```
 
-## Key Implementation Details
-- The teacher model uses the full BERT model (`google/bert_uncased_L-12_H-768_A-12`)
-- The student model uses a smaller BERT model (`google/bert_uncased_L-6_H-768_A-12`) with half the layers
-- Knowledge distillation is activated by simply passing the `teacher_predictor` parameter to the fit method
-- The student model learns by matching predictions/feature maps from the teacher
+**Key parameters:**
+- `model.hf_text.checkpoint_name`: Student backbone (smaller model)
+- `optim.max_epochs`: Training epochs
+- `teacher_predictor`: Pre-trained teacher model passed directly to fit
 
-## Additional Resources
-For more advanced distillation techniques and customization options, refer to:
-- [AutoMM Distillation Examples](https://github.com/autogluon/autogluon/tree/master/examples/automm/distillation)
-- [Multilingual distillation example](https://github.com/autogluon/autogluon/tree/master/examples/automm/distillation/automm_distillation_pawsx.py)
-- [Customize AutoMM](customization.ipynb)
+For customization options and comparison with direct finetuning, see [AutoMM Distillation Examples](https://github.com/autogluon/autogluon/tree/master/examples/automm/distillation), particularly the [multilingual distillation example](https://github.com/autogluon/autogluon/tree/master/examples/automm/distillation/automm_distillation_pawsx.py).

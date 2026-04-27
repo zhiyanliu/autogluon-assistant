@@ -1,51 +1,44 @@
-# Condensed: ```python
+# Condensed: Dataset
 
-Summary: This tutorial demonstrates implementing image-text matching with AutoGluon MultiModal, covering techniques for bidirectional retrieval between images and text. It shows how to prepare datasets, initialize a MultiModalPredictor for image-text similarity tasks, perform zero-shot evaluation, finetune models, and evaluate performance using recall metrics. Key functionalities include extracting embeddings from both modalities, making match predictions with confidence scores, and performing semantic search (text-to-image and image-to-text). The tutorial provides a complete workflow for building cross-modal retrieval systems that can find relevant images given text queries and vice versa.
+Summary: This tutorial demonstrates image-text matching using AutoGluon's `MultiModalPredictor` with CLIP backbone. It covers initializing a predictor with `problem_type="image_text_similarity"`, configuring `query`/`response` columns, zero-shot evaluation and finetuning with `recall@k` metrics (cutoffs), binary match prediction (`predict`/`predict_proba`), embedding extraction for images and text via `extract_embedding`, and bidirectional semantic search using `semantic_search()`. It helps with tasks including cross-modal retrieval, image-text similarity scoring, CLIP finetuning on custom datasets, and building semantic search systems. Key data preparation includes expanding image paths and constructing relevance-labeled test data with unique query/response sets.
 
 *This is a condensed version that preserves essential implementation details and context.*
 
 # Image-Text Matching with AutoGluon MultiModal
 
-## Setup
+## Setup & Dataset
 
 ```python
 !pip install autogluon.multimodal
-
-import os
-import warnings
-from IPython.display import Image, display
-import numpy as np
-warnings.filterwarnings('ignore')
-np.random.seed(123)
 ```
 
-## Dataset Preparation
+Uses **Flickr30K** dataset (31,783 images with descriptive captions). Each image has 5 captions, so image paths are duplicated 5 times to build correspondences.
 
 ```python
-# Download and extract Flickr30K dataset
-from autogluon.core.utils.loaders import load_pd, load_zip
-download_dir = './ag_automm_tutorial_imgtxt'
-zip_file = 'https://automl-mm-bench.s3.amazonaws.com/flickr30k.zip'
-load_zip.unzip(zip_file, unzip_dir=download_dir)
+from autogluon.core.utils.loaders import load_zip
+import pandas as pd, os
 
-# Load data
+download_dir = './ag_automm_tutorial_imgtxt'
+load_zip.unzip('https://automl-mm-bench.s3.amazonaws.com/flickr30k.zip', unzip_dir=download_dir)
+
 dataset_path = os.path.join(download_dir, 'flickr30k_processed')
 train_data = pd.read_csv(f'{dataset_path}/train.csv', index_col=0)
 val_data = pd.read_csv(f'{dataset_path}/val.csv', index_col=0)
 test_data = pd.read_csv(f'{dataset_path}/test.csv', index_col=0)
-image_col = "image"
-text_col = "caption"
+image_col, text_col = "image", "caption"
 
-# Convert relative paths to absolute paths
+# Expand relative paths to absolute
 def path_expander(path, base_folder):
     path_l = path.split(';')
     return ';'.join([os.path.abspath(os.path.join(base_folder, path)) for path in path_l])
 
-train_data[image_col] = train_data[image_col].apply(lambda ele: path_expander(ele, base_folder=dataset_path))
-val_data[image_col] = val_data[image_col].apply(lambda ele: path_expander(ele, base_folder=dataset_path))
-test_data[image_col] = test_data[image_col].apply(lambda ele: path_expander(ele, base_folder=dataset_path))
+for df in [train_data, val_data, test_data]:
+    df[image_col] = df[image_col].apply(lambda ele: path_expander(ele, base_folder=dataset_path))
+```
 
-# Prepare evaluation data
+Prepare test data with unique images/texts and relevance labels:
+
+```python
 test_image_data = pd.DataFrame({image_col: test_data[image_col].unique().tolist()})
 test_text_data = pd.DataFrame({text_col: test_data[text_col].unique().tolist()})
 test_data_with_label = test_data.copy()
@@ -54,6 +47,8 @@ test_data_with_label[test_label_col] = [1] * len(test_data)
 ```
 
 ## Initialize Predictor
+
+Set `problem_type="image_text_similarity"`. `query` and `response` are interchangeable between image/text columns. Loads pretrained **CLIP** (`openai/clip-vit-base-patch32`).
 
 ```python
 from autogluon.multimodal import MultiModalPredictor
@@ -65,83 +60,39 @@ predictor = MultiModalPredictor(
 )
 ```
 
-## Zero-Shot Evaluation
+## Evaluate (Zero-shot) & Finetune
 
 ```python
-# Text-to-image retrieval
+# Evaluate both retrieval directions
 txt_to_img_scores = predictor.evaluate(
-    data=test_data_with_label,
-    query_data=test_text_data,
-    response_data=test_image_data,
-    label=test_label_col,
-    cutoffs=[1, 5, 10],
-)
-
-# Image-to-text retrieval
+    data=test_data_with_label, query_data=test_text_data,
+    response_data=test_image_data, label=test_label_col, cutoffs=[1, 5, 10])
 img_to_txt_scores = predictor.evaluate(
-    data=test_data_with_label,
-    query_data=test_image_data,
-    response_data=test_text_data,
-    label=test_label_col,
-    cutoffs=[1, 5, 10],
-)
-print(f"txt_to_img_scores: {txt_to_img_scores}")
-print(f"img_to_txt_scores: {img_to_txt_scores}")
+    data=test_data_with_label, query_data=test_image_data,
+    response_data=test_text_data, label=test_label_col, cutoffs=[1, 5, 10])
 ```
 
-## Finetune the Model
+> **Note:** Image-to-text `recall@1` upper bound is 20% since each image maps to 5 texts—only one of five can be top-1.
 
 ```python
-predictor.fit(
-    train_data=train_data,
-    tuning_data=val_data,
-    time_limit=180,  # Quick demo with 3 minutes
-)
+# Finetune
+predictor.fit(train_data=train_data, tuning_data=val_data, time_limit=180)
 ```
 
-## Evaluate Finetuned Model
+Re-evaluate after finetuning using the same `evaluate()` calls — expect **large improvements** over zero-shot.
+
+## Predict & Extract Embeddings
 
 ```python
-txt_to_img_scores = predictor.evaluate(
-    data=test_data_with_label,
-    query_data=test_text_data,
-    response_data=test_image_data,
-    label=test_label_col,
-    cutoffs=[1, 5, 10],
-)
-img_to_txt_scores = predictor.evaluate(
-    data=test_data_with_label,
-    query_data=test_image_data,
-    response_data=test_text_data,
-    label=test_label_col,
-    cutoffs=[1, 5, 10],
-)
-print(f"txt_to_img_scores: {txt_to_img_scores}")
-print(f"img_to_txt_scores: {img_to_txt_scores}")
-```
-
-## Prediction Functions
-
-```python
-# Predict match/no-match
+# Match prediction (binary)
 pred = predictor.predict(test_data.head(5))
-print(pred)
 
-# Predict matching probabilities
+# Match probabilities (2nd column = match probability)
 proba = predictor.predict_proba(test_data.head(5))
-print(proba)  # Second column is the probability of being a match
-```
 
-## Extract Embeddings
-
-```python
-# Extract image embeddings
+# Extract embeddings
 image_embeddings = predictor.extract_embedding({image_col: test_image_data[image_col][:5].tolist()})
-print(image_embeddings.shape)
-
-# Extract text embeddings
 text_embeddings = predictor.extract_embedding({text_col: test_text_data[text_col][:5].tolist()})
-print(text_embeddings.shape)
 ```
 
 ## Semantic Search
@@ -149,22 +100,19 @@ print(text_embeddings.shape)
 ```python
 from autogluon.multimodal.utils import semantic_search
 
-# Text-to-image search
+# Text → Image search
 text_to_image_hits = semantic_search(
-    matcher=predictor,
-    query_data=test_text_data.iloc[[3]],
-    response_data=test_image_data,
-    top_k=5,
-)
+    matcher=predictor, query_data=test_text_data.iloc[[3]],
+    response_data=test_image_data, top_k=5)
 
-# Image-to-text search
+# Image → Text search
 image_to_text_hits = semantic_search(
-    matcher=predictor,
-    query_data=test_image_data.iloc[[6]],
-    response_data=test_text_data,
-    top_k=5,
-)
+    matcher=predictor, query_data=test_image_data.iloc[[6]],
+    response_data=test_text_data, top_k=5)
+
+# Access top result
+top_image_id = text_to_image_hits[0][0]['response_id']
+top_text_id = image_to_text_hits[0][1]['response_id']
 ```
 
-For more examples, see [AutoMM Examples](https://github.com/autogluon/autogluon/tree/master/examples/automm).
-For customization options, refer to [Customize AutoMM](../advanced_topics/customization.ipynb).
+**Key concepts:** `problem_type="image_text_similarity"` enables CLIP-based matching; `query`/`response` are symmetric; `cutoffs` control recall@k evaluation; finetuning on domain data significantly boosts retrieval performance.

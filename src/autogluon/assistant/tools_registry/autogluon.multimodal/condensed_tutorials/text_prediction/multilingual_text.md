@@ -1,46 +1,36 @@
-# Condensed: ```python
+# Condensed: Finetune the German BERT
 
-Summary: This tutorial demonstrates multilingual text classification with AutoGluon, covering: implementation of sentiment analysis across languages using pre-trained transformer models; techniques for both language-specific model training and zero-shot cross-lingual transfer; and comparison between monolingual and multilingual approaches. Key features include using language-specific BERT models (showing their limitations with other languages), implementing cross-lingual transfer with the "multilingual" preset parameter, and evaluating model performance across English, German, and Japanese datasets without language-specific training. The tutorial helps with building text classifiers that work effectively across multiple languages with minimal language-specific customization.
+Summary: This tutorial demonstrates cross-lingual text classification using AutoGluon's `MultiModalPredictor`, covering two approaches: finetuning a language-specific model (German BERT via `model.hf_text.checkpoint_name`) and enabling zero-shot cross-lingual transfer with `presets='multilingual'` (DeBERTa-V3 backbone). It shows how to train on one language (English) and evaluate on others (German, Japanese) without translation. Key implementation details include specifying HuggingFace checkpoints, configuring training epochs via hyperparameters, loading multilingual TSV datasets, and using `.fit()` and `.evaluate()` APIs. Useful for building multilingual sentiment classifiers and implementing zero-shot cross-lingual NLP pipelines.
 
 *This is a condensed version that preserves essential implementation details and context.*
 
-# Multilingual Text Classification with AutoGluon
+# Cross-Lingual Text Classification with AutoGluon MultiModal
 
-## Setup and Data Preparation
+## Setup & Data
 
 ```python
 !pip install autogluon.multimodal
-!wget --quiet https://automl-mm-bench.s3.amazonaws.com/multilingual-datasets/amazon_review_sentiment_cross_lingual.zip
+!wget --quiet https://automl-mm-bench.s3.amazonaws.com/multilingual-datasets/amazon_review_sentiment_cross_lingual.zip -O amazon_review_sentiment_cross_lingual.zip
 !unzip -q -o amazon_review_sentiment_cross_lingual.zip -d .
-
-import pandas as pd
-import warnings
-warnings.filterwarnings('ignore')
-
-# Load German data
-train_de_df = pd.read_csv('amazon_review_sentiment_cross_lingual/de_train.tsv',
-                          sep='\t', header=None, names=['label', 'text']) \
-                .sample(1000, random_state=123)
-train_de_df.reset_index(inplace=True, drop=True)
-
-test_de_df = pd.read_csv('amazon_review_sentiment_cross_lingual/de_test.tsv',
-                          sep='\t', header=None, names=['label', 'text']) \
-               .sample(200, random_state=123)
-test_de_df.reset_index(inplace=True, drop=True)
-
-# Load English data
-train_en_df = pd.read_csv('amazon_review_sentiment_cross_lingual/en_train.tsv',
-                          sep='\t', header=None, names=['label', 'text']) \
-                .sample(1000, random_state=123)
-train_en_df.reset_index(inplace=True, drop=True)
-
-test_en_df = pd.read_csv('amazon_review_sentiment_cross_lingual/en_test.tsv',
-                          sep='\t', header=None, names=['label', 'text']) \
-               .sample(200, random_state=123)
-test_en_df.reset_index(inplace=True, drop=True)
 ```
 
-## Approach 1: Finetune German BERT
+Load German and English train/test splits (TSV format with `label` and `text` columns):
+
+```python
+import pandas as pd
+train_de_df = pd.read_csv('amazon_review_sentiment_cross_lingual/de_train.tsv',
+                          sep='\t', header=None, names=['label', 'text']).sample(1000, random_state=123)
+test_de_df = pd.read_csv('amazon_review_sentiment_cross_lingual/de_test.tsv',
+                          sep='\t', header=None, names=['label', 'text']).sample(200, random_state=123)
+train_en_df = pd.read_csv('amazon_review_sentiment_cross_lingual/en_train.tsv',
+                          sep='\t', header=None, names=['label', 'text']).sample(1000, random_state=123)
+test_en_df = pd.read_csv('amazon_review_sentiment_cross_lingual/en_test.tsv',
+                          sep='\t', header=None, names=['label', 'text']).sample(200, random_state=123)
+```
+
+## Approach 1: Language-Specific Model (German BERT)
+
+Finetune a language-specific model via HuggingFace checkpoint name:
 
 ```python
 from autogluon.multimodal import MultiModalPredictor
@@ -51,19 +41,13 @@ predictor.fit(train_de_df,
                   'model.hf_text.checkpoint_name': 'bert-base-german-cased',
                   'optim.max_epochs': 2
               })
-
-# Evaluate on German test set
-score = predictor.evaluate(test_de_df)
-print('Score on the German Testset:', score)
-
-# Evaluate on English test set
-score = predictor.evaluate(test_en_df)
-print('Score on the English Testset:', score)
 ```
 
-**Key finding**: The German BERT model performs well on German data but poorly on English data.
+**Result:** Good performance on German, poor on English — no cross-lingual capability.
 
-## Approach 2: Cross-lingual Transfer
+## Approach 2: Cross-Lingual Transfer with `presets='multilingual'`
+
+Use `presets='multilingual'` to load a multilingual backbone (internally uses DeBERTa-V3). Train on **English only**, then evaluate on any language (zero-shot transfer):
 
 ```python
 predictor = MultiModalPredictor(label='label')
@@ -72,28 +56,24 @@ predictor.fit(train_en_df,
               hyperparameters={
                   'optim.max_epochs': 2
               })
-
-# Evaluate on English test set
-score_in_en = predictor.evaluate(test_en_df)
-print('Score in the English Testset:', score_in_en)
-
-# Evaluate on German test set
-score_in_de = predictor.evaluate(test_de_df)
-print('Score in the German Testset:', score_in_de)
-
-# Test on Japanese data
-test_jp_df = pd.read_csv('amazon_review_sentiment_cross_lingual/jp_test.tsv',
-                          sep='\t', header=None, names=['label', 'text']) \
-               .sample(200, random_state=123)
-test_jp_df.reset_index(inplace=True, drop=True)
-
-score_in_jp = predictor.evaluate(test_jp_df)
-print('Score in the Japanese Testset:', score_in_jp)
 ```
 
-**Key implementation details**:
-- Use `presets="multilingual"` to enable zero-shot cross-lingual transfer
-- AutoGluon automatically uses state-of-the-art models like DeBERTa-V3
-- The model trained only on English data works well for German and Japanese without additional training
+```python
+score_in_en = predictor.evaluate(test_en_df)  # Works for English
+score_in_de = predictor.evaluate(test_de_df)  # Works for German (zero-shot)
+```
 
-**Best practice**: For multilingual applications, use the multilingual preset rather than language-specific models when you need to support multiple languages.
+Test on Japanese (unseen language during training):
+
+```python
+test_jp_df = pd.read_csv('amazon_review_sentiment_cross_lingual/jp_test.tsv',
+                          sep='\t', header=None, names=['label', 'text']).sample(200, random_state=123)
+score_in_jp = predictor.evaluate(test_jp_df)  # Also works for Japanese
+```
+
+## Key Concepts
+
+- **`model.hf_text.checkpoint_name`**: Specify any HuggingFace model checkpoint for text backbone
+- **`presets='multilingual'`**: Enables cross-lingual transfer using multilingual pretrained models (DeBERTa-V3)
+- **Zero-shot cross-lingual transfer**: Train on one language, evaluate on others without translation — based on [XLM-R](https://arxiv.org/pdf/1911.02116.pdf) approach
+- This outperforms the "translate-test" baseline (translating target language to source language before inference)
