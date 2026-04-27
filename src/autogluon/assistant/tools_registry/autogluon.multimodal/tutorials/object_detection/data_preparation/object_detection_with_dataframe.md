@@ -1,7 +1,3 @@
-Summary: Summary: 
-
-Summary: Summary: This tutorial covers object detection data formats for AutoMM's AutoMM Detection, focusing on COCO and DataFrame formats for object detection. Supports both COCO and DataFrame formats for training and evaluation. Supports conversion between formats with utilities for object detection data formats. Supports training with AutoMM's MultiModalPrediagramming formats for object detection. Supports training with AutoMM's MultiModalPredictor. Supports object detection with AutoMM's MultiModalPredictor. Supports object detection with COCO and DataFrame formats for training and evaluation. Supports object detection with AutoMM's MultiModalPredictor. Supports object detection with AutoMM's MultiModalPredictor. Supports object detection with AutoMM's MultiModalPredictor. Supports object detection with AutoMM's MultiModalPredictor.
-
 Summary: This tutorial explains AutoMM's object detection data format handling, covering: 1) Implementation of COCO and DataFrame formats for object detection tasks, 2) Utility functions for converting between these formats (from_coco and object_detection_df_to_coco), 3) Training and evaluating object detection models using MultiModalPredictor with customizable hyperparameters. The tutorial demonstrates how to properly structure bounding box data, configure model checkpoints, and set training parameters for computer vision object detection tasks.
 
 # AutoMM Detection - Object detection data formats

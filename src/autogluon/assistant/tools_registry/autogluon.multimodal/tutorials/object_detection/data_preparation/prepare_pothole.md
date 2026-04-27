@@ -1,19 +1,3 @@
-Summary: "Summary: "Summarize_: "
-
-Summary: "Summarized: "
-
-Summary: "
-
-Summarize: "
-
-Summary: This tutorial provides a tutorial on how to use the AutoGluaMM.multimodal.cli.
-
-Summary: This tutorial demonstrates how to prepare detection datasets for object detection datasets for AutoGludem.
-
-Summary: "
-
-Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "Summary: "
-
 Summary: This tutorial demonstrates how to prepare object detection datasets using AutoGluon's MultiModal CLI. It covers downloading and preparing the pothole dataset in COCO format, which is the recommended format for AutoGluon's MultiModalPredictor. The tutorial explains command-line options for dataset preparation, including specifying output paths, and notes how the data is automatically split into train/validation/test sets. It warns that the original Kaggle dataset is in VOC format and provides links to additional resources for converting data to COCO format and customizing AutoMM. This knowledge helps with preparing datasets for object detection tasks in AutoGluon.
 
 ```
