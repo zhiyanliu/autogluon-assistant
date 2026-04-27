@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union
 
 from ..llm import ChatLLMFactory  # Import here to avoid circular imports
-from .utils import split_markdown_into_chunks
+from .utils import extract_title_from_markdown, split_markdown_into_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -206,8 +206,9 @@ class ToolsRegistry:
             # Read original content
             with open(tutorial_file, "r", encoding="utf-8") as f:
                 content = f.read()
-                first_line = content.split("\n")[0]
-                title = first_line.lstrip("#").strip()
+            # Extract title robustly (skips YAML frontmatter, HTML comments,
+            # any previously prepended "Summary: ..." line, etc.).
+            title = extract_title_from_markdown(content)
 
             # Create LLM instance for this tutorial with multi_turn enabled
             tutorial_config = llm_config.copy()

@@ -1,6 +1,43 @@
 from typing import List
 
 
+def extract_title_from_markdown(body: str) -> str:
+    """Best-effort tutorial title extraction.
+
+    Returns the first markdown header (`#`-prefixed line) found in `body`,
+    with `#` prefix and surrounding bold markers (`**`) stripped.
+
+    Why "first header" and not just "first non-empty line": tutorial files
+    commonly start with YAML frontmatter (--- ... ---), HTML comments, badge
+    images, or a previously stamped `Summary: ...` paragraph. Naively taking
+    the first line yields garbage like "---" or "Summary: ..." for those
+    cases. The first markdown header is a much more robust signal of the
+    tutorial's actual subject.
+
+    Falls back to the first non-empty line if no header is found, and to
+    "Tutorial" if the body is entirely empty.
+
+    Args:
+        body: Tutorial markdown content (may include frontmatter, etc).
+
+    Returns:
+        A clean title string suitable for use in headings like
+        "# Condensed: <title>".
+    """
+    lines = body.splitlines()
+    # Prefer the first markdown header.
+    for line in lines:
+        s = line.strip()
+        if s.startswith("#"):
+            return s.lstrip("#").strip().strip("*").strip()
+    # Fallback: first non-empty line.
+    for line in lines:
+        s = line.strip()
+        if s:
+            return s.lstrip("#").strip()
+    return "Tutorial"
+
+
 def split_markdown_into_chunks(content: str, max_chunk_size: int = 4000) -> List[str]:
     """
     Split markdown content into chunks at logical boundaries.
