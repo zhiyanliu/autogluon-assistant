@@ -14,7 +14,7 @@ authors = [
 dependencies = [
   "langgraph",
   "chardet>=5.2.0",
-  "FlagEmbedding>=1.3.5",
+  "FlagEmbedding>=1.3.5,<1.3.6",  # >= 1.3.6 uses dtype kwarg, incompatible with transformers < 4.49
   "transformers>=4.44.2,<4.49.0",  # FlagEmbedding uses is_torch_fx_available removed in 4.49
   "faiss-cpu",
   "importlib-resources>=6.4.5",
