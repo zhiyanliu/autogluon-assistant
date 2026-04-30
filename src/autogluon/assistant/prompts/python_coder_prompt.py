@@ -103,7 +103,17 @@ These errors were encountered across different implementation approaches and may
             "validation_prompt": validation_prompt,  # Dynamically generated
         }
 
-        prompt = self.render(additional_vars)
+        # Honor the global config knob max_user_input_length (default 2048, matching the
+        # historical hardcoded literal in the template). Doing the substitution against a local
+        # copy keeps self.template pristine across repeated _build() calls.
+        assert self.template is not None, "template not set on PythonCoderPrompt"
+        user_input_len = getattr(self.manager.config, "max_user_input_length", 2048)
+        resolved_template = self.template.replace(
+            "{user_input_truncate_end_2048}",
+            f"{{user_input_truncate_end_{user_input_len}}}",
+        )
+
+        prompt = self.render(additional_vars, template=resolved_template)
 
         # TODO: Remove hardcoding. And add this safeguard for other prompts.
         if len(prompt) > 80000:

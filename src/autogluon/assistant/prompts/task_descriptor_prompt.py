@@ -83,7 +83,18 @@ Be very clear about the problem type (e.g. audio classification/image regression
         # Render the prompt using the variable provider with additional variables
         additional_vars = {"description_file_contents": description_file_contents, "user_input": user_input}
 
-        prompt = self.render(additional_vars)
+        # Honor the agent-level config knob max_description_files_length_for_summarization
+        # (default 16384, matching the historical hardcoded literal in the template). Doing the
+        # substitution against a local copy keeps self.template pristine across repeated _build()
+        # calls and across meta-prompting state.
+        assert self.template is not None, "template not set on TaskDescriptorPrompt"
+        summ_len = getattr(self.llm_config, "max_description_files_length_for_summarization", 16384)
+        resolved_template = self.template.replace(
+            "{description_file_contents_truncate_end_16384}",
+            f"{{description_file_contents_truncate_end_{summ_len}}}",
+        )
+
+        prompt = self.render(additional_vars, template=resolved_template)
 
         self.manager.save_and_log_states(
             content=prompt, save_name="task_descriptor_prompt.txt", per_iteration=False, add_uuid=False

@@ -55,6 +55,27 @@ class TaskDescriptorAgent(BaseAgent):
         # Attach description file directly if within certain length
         description_files_contents = self.task_descriptor_prompt.get_description_files_contents(to_show=True)
 
+        # Honor the agent-level config knob max_description_files_length_to_show: when the
+        # combined description files are short enough to fit, skip the LLM summarization and use
+        # the file contents verbatim as the task description. This both saves an LLM round-trip
+        # and preserves the source text faithfully (no summarization noise).
+        to_show_max = getattr(self.task_descriptor_llm_config, "max_description_files_length_to_show", 1024)
+        if description_files_contents and len(description_files_contents) <= to_show_max:
+            task_description = description_files_contents
+            # Mirror the side effects of TaskDescriptorPrompt.parse() so downstream tooling that
+            # reads task_description.txt still works on this fast path.
+            self.manager.save_and_log_states(
+                content=task_description,
+                save_name="task_description.txt",
+                per_iteration=False,
+                add_uuid=False,
+            )
+            self.manager.log_agent_end(
+                "TaskDescriptorAgent: description files used verbatim (under "
+                f"max_description_files_length_to_show={to_show_max} chars), LLM summarization skipped."
+            )
+            return task_description
+
         task_description = description_files_contents
 
         # Otherwise generate condensed task description

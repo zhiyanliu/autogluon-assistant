@@ -150,16 +150,26 @@ class BasePrompt(ABC):
             return start_part + truncated_text + end_part
         return output
 
-    def render(self, additional_vars: Optional[Dict[str, Any]] = None) -> str:
+    def render(
+        self,
+        additional_vars: Optional[Dict[str, Any]] = None,
+        template: Optional[str] = None,
+    ) -> str:
         """
         Render the prompt template with the current variable values.
 
         Args:
             additional_vars: Additional variables to use for this rendering only
+            template: Optional template string to render instead of self.template.
+                      Lets callers do per-build template substitution (e.g. inject
+                      config-driven truncation lengths) without mutating self.template.
 
         Returns:
             The rendered prompt
         """
+        tpl = template if template is not None else self.template
+        assert tpl is not None, "render() called before a template was set"
+
         # If additional variables are provided, we need a temporary provider
         if additional_vars:
             # Create a subclass of VariableProvider that can handle the additional vars
@@ -176,9 +186,9 @@ class BasePrompt(ABC):
                     return self.parent_provider.get_value(var_name)
 
             temp_provider = TempProvider(self.variable_provider, additional_vars)
-            rendered = temp_provider.render_template(self.template)
+            rendered = temp_provider.render_template(tpl)
         else:
-            rendered = self.variable_provider.render_template(self.template)
+            rendered = self.variable_provider.render_template(tpl)
 
         # Add format instructions if configured
         if hasattr(self.llm_config, "add_coding_format_instruction") and self.llm_config.add_coding_format_instruction:
