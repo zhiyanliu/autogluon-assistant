@@ -1081,10 +1081,22 @@ class NodeManager:
                     shutil.copytree(source_item, dest_item, dirs_exist_ok=True)
             logger.debug("Finished copying output folder contents")
 
-            # Create symbolic link to the source folder instead of copying
-            logger.debug(f"About to create symlink: {best_run_folder} -> {source_folder}")
+            # Create symbolic link to the source folder instead of copying.
+            # IMPORTANT: compute the symlink target as a path RELATIVE TO the symlink's parent
+            # directory (not relative to the cwd / original `source_folder` string). When
+            # `output_folder` is given as a relative path on the CLI (e.g.
+            # `autogluon-assitant-try/run_smoke_<ts>`), `source_folder` is also relative
+            # ("autogluon-assitant-try/run_smoke_<ts>/node_<n>") and a naive
+            # `os.symlink(source_folder, best_run_folder)` produces a symlink whose target
+            # resolves relative to its OWN directory, ending up at e.g.
+            # `<run>/autogluon-assitant-try/run_smoke_<ts>/node_<n>` (nonexistent). Using
+            # `os.path.relpath(source_folder, start=os.path.dirname(best_run_folder))` yields
+            # the correct sibling-path target (e.g. just "node_<n>"), portable across moves
+            # and absolute-vs-relative invocation styles.
+            symlink_target = os.path.relpath(source_folder, start=os.path.dirname(best_run_folder))
+            logger.debug(f"About to create symlink: {best_run_folder} -> {symlink_target} (resolves to {source_folder})")
             logger.info("Creating best_run symlink to best solution folder (instant operation, saves disk space)")
-            os.symlink(source_folder, best_run_folder, target_is_directory=True)
+            os.symlink(symlink_target, best_run_folder, target_is_directory=True)
             logger.debug("Successfully created best_run symlink")
 
             logger.info(f"Created best_run symlink (linked to node {target_node.id} - {link_reason})")
