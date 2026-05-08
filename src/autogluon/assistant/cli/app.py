@@ -51,26 +51,34 @@ def main(
         "--max-iterations",
         help="Max iteration count. If the task hasn’t succeeded after this many iterations, it will terminate.",
     ),
-    continuous_improvement: bool = typer.Option(
-        False,
-        "--continuous_improvement",
-        help="If enabled, the system will continue optimizing even after finding a valid solution. Instead of stopping at the first successful run, it will keep searching for better solutions until reaching the maximum number of iterations. This allows the system to potentially find higher quality solutions at the cost of additional computation time.",
+    # NOTE on default values for the bool flags below:
+    # coding_agent.run_agent() does `if X is not None: config.X = X` for these flags, with the
+    # design intent that "user did not pass --flag => leave config alone (yaml decides)".
+    # Defaulting these typer.Options to a hard `False` (instead of None) sends bool False through
+    # to run_agent on every invocation, which silently overrides whatever the yaml set. So a user
+    # putting `continuous_improvement: true` in their -c yaml file would see it ignored unless
+    # they ALSO passed --continuous_improvement on the CLI. Using `None` defaults + the dual-form
+    # `--flag/--no-flag` syntax makes the CLI truly "absent = unset".
+    continuous_improvement: bool | None = typer.Option(
+        None,
+        "--continuous_improvement/--no-continuous_improvement",
+        help="If enabled, the system will continue optimizing even after finding a valid solution. Instead of stopping at the first successful run, it will keep searching for better solutions until reaching the maximum number of iterations. This allows the system to potentially find higher quality solutions at the cost of additional computation time. If unset, the value from the loaded YAML config is used.",
     ),
-    remove_current_iteration_folder: bool = typer.Option(
-        False,
-        "--remove-iteration-folders",
-        help="If enabled, remove iteration folders after each step to save disk space. Note: the best node folder will be preserved via symlink.",
+    remove_current_iteration_folder: bool | None = typer.Option(
+        None,
+        "--remove-iteration-folders/--no-remove-iteration-folders",
+        help="If enabled, remove iteration folders after each step to save disk space. Note: the best node folder will be preserved via symlink. If unset, the value from the loaded YAML config is used.",
     ),
     enable_per_iteration_instruction: bool = typer.Option(
         False,
         "--enable-per-iteration-instruction",
         help="If enabled, provide an instruction at the start of each iteration (except the first, which uses the initial instruction). The process suspends until you provide it.",
     ),
-    enable_meta_prompting: bool = typer.Option(
-        False,
+    enable_meta_prompting: bool | None = typer.Option(
+        None,
         "-m",
-        "--enable-meta-prompting",
-        help="If enabled, the system will refine the prompts itself based on user instruction and given data.",
+        "--enable-meta-prompting/--no-enable-meta-prompting",
+        help="If enabled, the system will refine the prompts itself based on user instruction and given data. If unset, the value from the loaded YAML config is used.",
     ),
     initial_user_input: str | None = typer.Option(
         None, "-t", "--initial-instruction", help="You can provide the initial instruction here."
