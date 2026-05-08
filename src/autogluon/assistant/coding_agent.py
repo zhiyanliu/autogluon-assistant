@@ -164,8 +164,14 @@ def run_agent(
         else:
             pass
 
-        # Optionally remove iteration folders to save disk space
-        if config.remove_current_iteration_folder:
+        # Optionally remove iteration folders to save disk space.
+        # NOTE: `remove_current_iteration_folder` is NOT defined in any upstream YAML
+        # (default.yaml / bedrock.yaml / etc.), so a bare `config.X` attribute access raises
+        # ConfigAttributeError when the user (a) does not pass --remove-iteration-folders on the
+        # CLI AND (b) the typer.Option default for that flag is None (so the flag never gets
+        # written into config). Use safe access with a False fallback so the field's absence is
+        # treated as "do not remove iteration folders" rather than crashing the run.
+        if OmegaConf.select(config, "remove_current_iteration_folder", default=False):
             manager.remove_current_iteration_folder()
 
         # Increment iteration counter
