@@ -154,8 +154,11 @@ def run_agent(
             # Create a best run copy when we find a successful solution
             manager.create_best_run_copy()
 
-            # If not in continuous improvement mode, we can stop
-            if not config.continuous_improvement:
+            # If not in continuous improvement mode, we can stop.
+            # Safe-read: don't assume any specific YAML schema — any optional config key may be
+            # absent if the user provided a custom config that doesn't define it. Default False
+            # matches the historic upstream behavior (stop after first success).
+            if not OmegaConf.select(config, "continuous_improvement", default=False):
                 logger.brief("Stopping search - solution found and continuous improvement is disabled")
                 break
         elif success is None:

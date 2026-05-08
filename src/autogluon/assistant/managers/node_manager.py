@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, List, Literal, Optional, Set
 
+from omegaconf import OmegaConf
+
 from ..llm import ChatLLMFactory
 from ..tools_registry import registry
 
@@ -346,8 +348,10 @@ class NodeManager:
             prompt_template=None,
         )
 
-        # Initialize meta-prompting
-        self.enable_meta_prompting = self.config.enable_meta_prompting
+        # Initialize meta-prompting.
+        # Safe-read: optional key, may be absent in user-supplied custom configs. Default False
+        # matches the historic upstream behavior (no meta-prompting unless explicitly enabled).
+        self.enable_meta_prompting = OmegaConf.select(self.config, "enable_meta_prompting", default=False)
         self.meta_prompting_agent = MetaPromptingAgent(
             config=self.config,
             manager=self,
@@ -1126,8 +1130,15 @@ class NodeManager:
                 content=summary_text, save_name="best_run_summary.txt", node=target_node, add_uuid=False
             )
 
-            # Clean up old best folder if cleanup is enabled and it's not the same as the new one
-            if old_best_folder and self.config.remove_current_iteration_folder:
+            # Clean up old best folder if cleanup is enabled and it's not the same as the new one.
+            # NOTE: `remove_current_iteration_folder` is NOT defined in any upstream YAML, so a
+            # bare attribute read raises ConfigAttributeError when the user neither passes
+            # --remove-iteration-folders on the CLI nor declares the field in their custom yaml.
+            # Use OmegaConf.select with a False fallback (mirrors the same pattern in
+            # coding_agent.py:168, where the bare read was previously crashing the whole MCTS loop;
+            # here it was caught by the surrounding try/except but produced a misleading
+            # 'Failed to create symlink' log message).
+            if old_best_folder and OmegaConf.select(self.config, "remove_current_iteration_folder", default=False):
                 source_folder_abs = os.path.abspath(source_folder)
                 logger.debug(f"Checking if old best folder should be removed: {old_best_folder}")
                 logger.debug(f"  New best folder: {source_folder_abs}")
@@ -1429,7 +1440,9 @@ class NodeManager:
         if self.selected_tool.lower() in ["machine learning", "huggingface", "fairseq"]:
             return True
         else:
-            return self.config.configure_env
+            # Safe-read: optional key, default False to keep historic upstream behavior
+            # (no extra package install unless explicitly enabled in config).
+            return OmegaConf.select(self.config, "configure_env", default=False)
 
     @property
     def code_to_improve(

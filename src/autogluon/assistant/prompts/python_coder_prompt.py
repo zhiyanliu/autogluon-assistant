@@ -8,6 +8,8 @@ based on task description, data structure, and other context.
 import logging
 from typing import Dict, Optional, Tuple
 
+from omegaconf import OmegaConf
+
 from ..utils import get_cpu_count, get_gpu_count
 from .base_prompt import BasePrompt
 from .utils import extract_code
@@ -137,7 +139,9 @@ These errors were encountered across different implementation approaches and may
 
     def _generate_validation_prompt(self) -> str:
         """Generate the validation section of the prompt."""
-        if self.manager.config.continuous_improvement:
+        # Safe-read: optional key, may be absent in user-supplied custom configs.
+        # Default False matches historic upstream behavior.
+        if OmegaConf.select(self.manager.config, "continuous_improvement", default=False):
             return """6. Validation (only when there is labeled training data):
    - If there is training and but no validation data is given, hold out a validation dataset (10 percent of the data) at the start, train only on the remaining data.
    - At the end compute and print the final evaluation metric score on the validation set.
@@ -176,7 +180,9 @@ Please fix the errors in the code above. Make minimal changes necessary to fix t
         else:
             code_improvement_prompt = ""
 
-        if self.manager.config.optimize_system_resources:
+        # Safe-read: optional key, default False to keep historic upstream behavior
+        # (no system-resource hint injection unless explicitly enabled in config).
+        if OmegaConf.select(self.manager.config, "optimize_system_resources", default=False):
             code_improvement_prompt += self._generate_system_resources_prompt()
 
         return code_improvement_prompt
