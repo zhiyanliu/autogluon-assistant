@@ -117,9 +117,15 @@ These errors were encountered across different implementation approaches and may
 
         prompt = self.render(additional_vars, template=resolved_template)
 
-        # TODO: Remove hardcoding. And add this safeguard for other prompts.
-        if len(prompt) > 80000:
-            logger.warning(f"Coder's prompt too long: {len(prompt)}. Truncated.")
+        # Honor the global config knob max_python_coder_prompt_length (default 128000).
+        # Historical hardcoded literal was 80000, but with rich description files + tutorials +
+        # validation prompt the budget gets exceeded and the tail (validation_prompt + user_input)
+        # was being silently truncated. 128k chars fits inside Anthropic 200K context windows.
+        max_prompt_chars = OmegaConf.select(
+            self.manager.config, "max_python_coder_prompt_length", default=128000
+        )
+        if len(prompt) > max_prompt_chars:
+            logger.warning(f"Coder's prompt too long: {len(prompt)}. Truncated to {max_prompt_chars}.")
             self.manager.save_and_log_states(
                 content=prompt,
                 save_name="python_coder_prompt_before_truncation.txt",
@@ -128,7 +134,7 @@ These errors were encountered across different implementation approaches and may
             )
             prompt = self._truncate_output_end(
                 output=prompt,
-                max_length=80000,
+                max_length=max_prompt_chars,
             )
 
         self.manager.save_and_log_states(
