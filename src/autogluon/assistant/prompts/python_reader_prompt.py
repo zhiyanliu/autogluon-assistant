@@ -38,7 +38,14 @@ Your code should:
 1. Use appropriate libraries based on file type (pandas for tabular data, etc.)
 2. For tabular files (csv, excel, parquet, etc.):
     - Display column names. If there are more than 20 columns, only display the first and last 10.
-    - Show first 2-3 rows with truncated cell content (50 chars).
+    - Show first 2-3 rows and last 2-3 rows with truncated cell content (50 chars);
+      the tail may differ materially from the head in time-ordered or append-only data.
+    - For numeric columns: print a summary (count, min, max, mean, std,
+      fraction of zeros, fraction of NaN).
+    - If a column appears to be a timestamp, print its min, max, total span,
+      and whether rows are sorted by it.
+    - For files larger than 100 MB, load a sample (e.g. head + tail + random
+      middle rows) rather than the full file when computing summaries.
     - Do not show additional index column if it's not in the original table
     - If failed to open the file, treat it as text file
 3. For text files:
