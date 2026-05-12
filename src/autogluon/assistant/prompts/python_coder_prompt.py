@@ -169,15 +169,37 @@ Please optimize your code to efficiently utilize the available hardware resource
         if self.manager.time_step == 0:
             return ""  # No previous code on first iteration
 
+        # Surface parent / global-best validation_score so the Coder can
+        # reason about how strong the evolve/debug starting point actually is.
+        # Scores follow AutoGluon's higher-is-better convention.
+        score_context = ""
+        parent = getattr(self.manager.current_node, "parent", None)
+        parent_score = getattr(parent, "validation_score", None) if parent else None
+        best_score = getattr(self.manager, "_best_validation_score", None)
+        if parent_score is not None or best_score is not None:
+            lines = []
+            if parent_score is not None:
+                lines.append(
+                    f"- Previous attempt's validation_score: {parent_score:.4f}"
+                )
+            if best_score is not None:
+                lines.append(
+                    f"- Current best validation_score across all attempts so far: {best_score:.4f}"
+                )
+            lines.append(
+                "Higher values are better. A low score means the previous attempt was weak — prefer structural changes over minor tuning. A score close to the best so far means minor refinements may be more appropriate."
+            )
+            score_context = "\n### Previous Attempt Quality Signal\n" + "\n".join(lines) + "\n\n"
+
         if self.manager.code_to_improve:
-            code_improvement_prompt = f"""### Previous Code to Improve
+            code_improvement_prompt = f"""{score_context}### Previous Code to Improve
 ```python
 {self.manager.code_to_improve}
 ```
 Please prioritize model architecture improvements and training optimization to enhance performance. Feature engineering may also be applied but with lower priority.
 """
         elif self.manager.code_to_debug:
-            code_improvement_prompt = f"""### Previous Code to Debug
+            code_improvement_prompt = f"""{score_context}### Previous Code to Debug
 ```python
 {self.manager.code_to_debug}
 ```
